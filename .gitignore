@@ -1,0 +1,53 @@
+# Dependencies
+/node_modules
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+
+# Production / Build outputs
+/dist
+/build
+/out
+/.next
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Office Add-in specific
+/.office-addin-dev-certs
+manifest-*.xml.bak
+
+# Temporary / editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Coverage and testing
+coverage
+.nyc_output
+
+# Vercel / Deployment
+.vercel
+
+# IDE / Editor
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.sublime-*
+
+# OS generated files
+ehthumbs.db
+Desktop.ini

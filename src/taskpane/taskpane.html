@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Finalysis</title>
+
+    <!-- Office JavaScript API -->
+    <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+
+    <link href="taskpane.css" rel="stylesheet" type="text/css" />
+</head>
+
+<body>
+    <div id="app-root" class="app is-loading">
+        <header class="app__header">
+            <div class="app__brand">
+                <span class="app__logo" aria-hidden="true">▤</span>
+                <span class="app__title">Finalysis</span>
+            </div>
+            <button id="settings-toggle" class="icon-btn" type="button" title="Settings" aria-label="Settings">
+                ⚙
+            </button>
+        </header>
+
+        <section id="settings-panel" class="settings-panel" hidden>
+            <h2 class="settings-panel__title">Settings</h2>
+            <label class="field">
+                <span class="field__label">Finnhub API key</span>
+                <input id="settings-api-key" class="field__input" type="password" autocomplete="off"
+                    placeholder="Paste your Finnhub key" />
+            </label>
+            <p id="settings-key-status" class="field__hint">No key saved.</p>
+            <div class="settings-panel__actions">
+                <button id="settings-save" class="btn btn--primary" type="button">Save</button>
+                <button id="settings-clear" class="btn" type="button">Clear</button>
+            </div>
+            <p class="settings-panel__footnote">
+                Stored in this workbook's settings with a browser-local fallback. For production, route API
+                calls through a backend proxy so the key stays server-side.
+            </p>
+        </section>
+
+        <nav class="tabs" role="tablist">
+            <button class="tabs__btn is-active" role="tab" data-tab="dashboard">Dashboard</button>
+            <button class="tabs__btn" role="tab" data-tab="data-import">Data</button>
+            <button class="tabs__btn" role="tab" data-tab="reconciliation">Reconcile</button>
+            <button class="tabs__btn" role="tab" data-tab="ai-insights">AI</button>
+        </nav>
+
+        <main class="tab-panels">
+            <!-- Dashboard -->
+            <section id="tab-dashboard" class="tab-panel is-active" role="tabpanel">
+                <h2 class="panel__title">Quick lookup</h2>
+                <p class="panel__subtitle">Verify a ticker before importing. Nothing is written to the sheet.</p>
+                <div class="row">
+                    <input id="dash-symbol" class="field__input" type="text" placeholder="e.g. AAPL"
+                        autocomplete="off" />
+                    <button id="dash-lookup-btn" class="btn btn--primary" type="button">Look up</button>
+                </div>
+                <div id="dash-quote-card" class="quote-card is-empty">
+                    <p class="quote-card__placeholder">Results will appear here.</p>
+                </div>
+            </section>
+
+            <!-- Data Import -->
+            <section id="tab-data-import" class="tab-panel" role="tabpanel" hidden>
+                <h2 class="panel__title">Import from Finnhub</h2>
+                <p class="panel__subtitle">Each action writes results to a new worksheet.</p>
+
+                <label class="field">
+                    <span class="field__label">Ticker symbol</span>
+                    <input id="di-symbol" class="field__input" type="text" placeholder="e.g. AAPL"
+                        autocomplete="off" />
+                </label>
+
+                <div class="card">
+                    <h3 class="card__title">Current quote</h3>
+                    <p class="card__body">Open, high, low, close, previous close, and change.</p>
+                    <button id="di-quote-btn" class="btn btn--primary" type="button">Import quote</button>
+                </div>
+
+                <div class="card">
+                    <h3 class="card__title">Historical candles</h3>
+                    <p class="card__body card__body--note">Requires a paid Finnhub plan (free tier returns 403).</p>
+                    <div class="row row--2">
+                        <label class="field">
+                            <span class="field__label">Resolution</span>
+                            <select id="di-candles-resolution" class="field__input">
+                                <option value="D" selected>Daily</option>
+                                <option value="W">Weekly</option>
+                                <option value="M">Monthly</option>
+                                <option value="60">60 min</option>
+                                <option value="30">30 min</option>
+                                <option value="15">15 min</option>
+                                <option value="5">5 min</option>
+                                <option value="1">1 min</option>
+                            </select>
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Lookback (days)</span>
+                            <input id="di-candles-days" class="field__input" type="number" min="1" value="30" />
+                        </label>
+                    </div>
+                    <button id="di-candles-btn" class="btn btn--primary" type="button">Import candles</button>
+                </div>
+
+                <div class="card">
+                    <h3 class="card__title">Company profile</h3>
+                    <p class="card__body">Name, exchange, industry, market cap, website, etc.</p>
+                    <button id="di-profile-btn" class="btn btn--primary" type="button">Import profile</button>
+                </div>
+
+                <div class="card">
+                    <h3 class="card__title">Basic financials</h3>
+                    <p class="card__body">Key metrics (PE, margins, 52-week range, growth, etc.).</p>
+                    <button id="di-financials-btn" class="btn btn--primary" type="button">Import financials</button>
+                </div>
+            </section>
+
+            <!-- Reconciliation (placeholder) -->
+            <section id="tab-reconciliation" class="tab-panel" role="tabpanel" hidden>
+                <h2 class="panel__title">Reconciliation</h2>
+                <p class="panel__subtitle">Match two columns of transactions and surface discrepancies.</p>
+                <div class="placeholder">
+                    <p><strong>Coming soon.</strong></p>
+                    <ul>
+                        <li>Pick a source range and a target range from your workbook.</li>
+                        <li>See matches, source-only, target-only, and duplicates.</li>
+                        <li>Optional numeric tolerance for near-match detection.</li>
+                        <li>Results written to a new worksheet with a summary row.</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- AI Insights (placeholder) -->
+            <section id="tab-ai-insights" class="tab-panel" role="tabpanel" hidden>
+                <h2 class="panel__title">AI Insights</h2>
+                <p class="panel__subtitle">Explain anomalies in your financial data.</p>
+                <div class="placeholder">
+                    <p><strong>Coming soon.</strong></p>
+                    <ul>
+                        <li>Anomaly detection over imported time series.</li>
+                        <li>Natural-language explanations of outliers.</li>
+                        <li>Auto-flagging in the sheet via comments or formatting.</li>
+                    </ul>
+                </div>
+            </section>
+        </main>
+
+        <footer id="status-strip" class="status-strip is-empty" data-kind="info" aria-live="polite"></footer>
+
+        <div id="sideload-msg" class="sideload" hidden>
+            <p>Please <a target="_blank"
+                    href="https://learn.microsoft.com/office/dev/add-ins/testing/test-debug-office-add-ins#sideload-an-office-add-in-for-testing">sideload</a>
+                this add-in into Excel to use it.</p>
+        </div>
+    </div>
+</body>
+
+</html>
