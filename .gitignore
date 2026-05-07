@@ -15,12 +15,7 @@ project-knowledge.md
 /out
 /.next
 
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+
 
 # Environment variables
 .env
