@@ -3,7 +3,11 @@
 /.pnp
 .pnp.js
 .yarn/install-state.gz
+
+# Knowledge / Context files (optional)
 knowledge.md
+project-knowledge.md
+*.knowledge.md
 
 # Production / Build outputs
 /dist
