@@ -801,3 +801,369 @@ body {
   margin: 2px 0;
   cursor: pointer;
 }
+
+/* ==================== Portfolio Tracker ==================== */
+
+/* Top metrics row */
+.pf-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.pf-metric {
+  padding: 8px 10px;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  background: var(--fa-surface);
+}
+
+.pf-metric--rows {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 80px;
+}
+
+.pf-metric__label {
+  font-size: 10px;
+  color: var(--fa-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-weight: 600;
+}
+
+.pf-metric__value {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+.pf-metric__value--small {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pf-metric__rows {
+  font-size: 12px;
+  color: var(--fa-text-muted);
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Toolbar */
+.pf-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.pf-toolbar .btn {
+  padding: 6px 10px;
+}
+
+.btn--danger {
+  background: var(--fa-error);
+  border-color: var(--fa-error);
+  color: #fff;
+}
+
+.btn--danger:hover {
+  background: #8e1f24;
+  border-color: #8e1f24;
+  color: #fff;
+}
+
+/* Manual add */
+.pf-add-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.pf-add-grid .field {
+  margin-bottom: 0;
+}
+
+.pf-add-preview {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  min-height: 20px;
+  font-size: 11px;
+  color: var(--fa-text-muted);
+  background: var(--fa-surface);
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  font-family: Consolas, Menlo, "Courier New", monospace;
+  word-break: break-word;
+}
+
+.pf-add-preview:empty {
+  display: none;
+}
+
+.pf-add-preview.is-error {
+  color: var(--fa-error);
+}
+
+/* Holdings table */
+.pf-empty {
+  margin: 12px 0;
+  padding: 16px;
+  border: 1px dashed var(--fa-border);
+  border-radius: var(--fa-radius);
+  text-align: center;
+  color: var(--fa-text-muted);
+  font-size: 12px;
+}
+
+.pf-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  margin-bottom: 12px;
+}
+
+.pf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.pf-table th,
+.pf-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--fa-border);
+  white-space: nowrap;
+  text-align: left;
+}
+
+.pf-table th {
+  background: var(--fa-surface-2);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--fa-text-muted);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.pf-table tbody tr:hover {
+  background: var(--fa-surface);
+}
+
+.pf-td--sym {
+  font-weight: 700;
+  color: var(--fa-primary);
+}
+
+.pf-td--name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-td--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.pf-td--actions {
+  text-align: center;
+  padding: 2px 4px;
+}
+
+.pf-row-del {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fa-text-muted);
+  border-radius: var(--fa-radius);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pf-row-del:hover {
+  background: #fde7e9;
+  color: var(--fa-error);
+  border-color: var(--fa-error);
+}
+
+.pf-pnl--up {
+  color: var(--fa-up);
+  font-weight: 600;
+}
+
+.pf-pnl--down {
+  color: var(--fa-down);
+  font-weight: 600;
+}
+
+/* CSV mapper */
+.pf-csv-panel,
+.pf-recon-panel {
+  border-color: var(--fa-primary);
+  background: #f5faff;
+}
+
+.pf-csv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.pf-csv-head .card__title {
+  margin: 0;
+}
+
+.pf-csv-count {
+  font-size: 11px;
+  color: var(--fa-text-muted);
+}
+
+.pf-csv-mapping {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.pf-map-row {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.pf-map-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fa-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.pf-csv-preview-wrap {
+  margin-bottom: 10px;
+}
+
+.pf-csv-preview-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fa-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 4px;
+}
+
+.pf-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  background: var(--fa-bg);
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+}
+
+.pf-preview-table th,
+.pf-preview-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--fa-border);
+  text-align: left;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pf-preview-table th {
+  background: var(--fa-surface-2);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fa-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.pf-csv-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pf-recon-range {
+  font-family: Consolas, Menlo, "Courier New", monospace;
+  font-size: 11px;
+  color: var(--fa-text);
+}
+
+/* Recon summary */
+.pf-recon-summary {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  background: var(--fa-surface);
+}
+
+.pf-recon-summary h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pf-recon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.pf-recon-stat {
+  padding: 6px 4px;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  background: var(--fa-bg);
+  text-align: center;
+}
+
+.pf-recon-stat__v {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.pf-recon-stat__l {
+  font-size: 10px;
+  color: var(--fa-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: 2px;
+}
+
+.pf-recon-stat--ok .pf-recon-stat__v {
+  color: var(--fa-success);
+}
+
+.pf-recon-stat--warn .pf-recon-stat__v {
+  color: var(--fa-warning);
+}
+
+.pf-recon-stat--err .pf-recon-stat__v {
+  color: var(--fa-error);
+}
+
+.pf-recon-foot {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--fa-text-muted);
+}

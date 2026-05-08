@@ -47,7 +47,7 @@
             <button class="tabs__btn is-active" role="tab" data-tab="dashboard">Dashboard</button>
             <button class="tabs__btn" role="tab" data-tab="data-import">Data</button>
             <button class="tabs__btn" role="tab" data-tab="reconciliation">Reconcile</button>
-            <button class="tabs__btn" role="tab" data-tab="ai-insights">AI</button>
+            <button class="tabs__btn" role="tab" data-tab="portfolio">Portfolio</button>
         </nav>
 
         <main class="tab-panels">
@@ -192,18 +192,124 @@
                 <div id="recon-summary" class="recon__summary" hidden></div>
             </section>
 
-            <!-- AI Insights (placeholder) -->
-            <section id="tab-ai-insights" class="tab-panel" role="tabpanel" hidden>
-                <h2 class="panel__title">AI Insights</h2>
-                <p class="panel__subtitle">Explain anomalies in your financial data.</p>
-                <div class="placeholder">
-                    <p><strong>Coming soon.</strong></p>
-                    <ul>
-                        <li>Anomaly detection over imported time series.</li>
-                        <li>Natural-language explanations of outliers.</li>
-                        <li>Auto-flagging in the sheet via comments or formatting.</li>
-                    </ul>
+            <!-- Portfolio Tracker -->
+            <section id="tab-portfolio" class="tab-panel" role="tabpanel" hidden>
+                <h2 class="panel__title">Portfolio Tracker</h2>
+                <p class="panel__subtitle">Track holdings with live Finnhub prices. The
+                    <strong>Portfolio</strong> worksheet is the source of truth — edits here sync to it.</p>
+
+                <!-- Top metrics -->
+                <div class="pf-metrics">
+                    <div class="pf-metric">
+                        <div class="pf-metric__label">Market Value</div>
+                        <div id="pf-total-market" class="pf-metric__value">$0.00</div>
+                    </div>
+                    <div class="pf-metric">
+                        <div class="pf-metric__label">Cost Basis</div>
+                        <div id="pf-total-cost" class="pf-metric__value">$0.00</div>
+                    </div>
+                    <div class="pf-metric">
+                        <div class="pf-metric__label">Unrealized P&amp;L</div>
+                        <div id="pf-total-pnl" class="pf-metric__value">$0.00</div>
+                        <div id="pf-total-pnl-pct" class="pf-metric__value pf-metric__value--small">0.00%</div>
+                    </div>
+                    <div class="pf-metric pf-metric--rows">
+                        <div id="pf-total-rows" class="pf-metric__rows">0 holdings</div>
+                    </div>
                 </div>
+
+                <!-- Toolbar -->
+                <div class="pf-toolbar">
+                    <button id="pf-refresh-btn" class="btn btn--primary" type="button"
+                        title="Fetch fresh quotes for every holding">↻ Refresh Prices</button>
+                    <button id="pf-csv-btn" class="btn" type="button"
+                        title="Import a broker export with smart column mapping">⇪ Import CSV</button>
+                    <button id="pf-recon-btn" class="btn" type="button"
+                        title="Select a broker range in Excel, then click this to reconcile">⇌ Reconcile</button>
+                    <button id="pf-clear-btn" class="btn" type="button"
+                        title="Remove every holding and clear the Portfolio sheet">Clear</button>
+                    <input id="pf-csv-file" type="file" accept=".csv,text/csv" hidden />
+                </div>
+
+                <!-- Manual entry -->
+                <div class="card pf-add">
+                    <h3 class="card__title">Add a holding</h3>
+                    <p class="card__body">Type a ticker — Finnhub fills in company name, sector, and price.</p>
+                    <div class="pf-add-grid">
+                        <label class="field">
+                            <span class="field__label">Ticker</span>
+                            <input id="pf-add-symbol" class="field__input" type="text" placeholder="AAPL"
+                                autocomplete="off" />
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Quantity</span>
+                            <input id="pf-add-qty" class="field__input" type="number" min="0" step="any"
+                                placeholder="100" />
+                        </label>
+                        <label class="field">
+                            <span class="field__label">Avg Cost Basis</span>
+                            <input id="pf-add-cost" class="field__input" type="number" min="0" step="any"
+                                placeholder="150.00" />
+                        </label>
+                        <button id="pf-add-btn" class="btn btn--primary" type="button">Add</button>
+                    </div>
+                    <p id="pf-add-preview" class="pf-add-preview"></p>
+                </div>
+
+                <!-- CSV mapper (shown after a file is parsed) -->
+                <div id="pf-csv-panel" class="card pf-csv-panel" hidden>
+                    <div class="pf-csv-head">
+                        <h3 class="card__title">Map CSV columns</h3>
+                        <span id="pf-csv-count" class="pf-csv-count"></span>
+                    </div>
+                    <p class="card__body"><strong id="pf-csv-filename"></strong> — map each standard field to a
+                        column in your file. Required fields are marked with *.</p>
+                    <div id="pf-csv-mapping" class="pf-csv-mapping"></div>
+                    <div class="pf-csv-preview-wrap">
+                        <div class="pf-csv-preview-label">Preview (first 3 rows)</div>
+                        <div id="pf-csv-preview"></div>
+                    </div>
+                    <div class="pf-csv-actions">
+                        <button id="pf-csv-confirm" class="btn btn--primary" type="button">Import</button>
+                        <button id="pf-csv-cancel" class="btn" type="button">Cancel</button>
+                    </div>
+                </div>
+
+                <!-- Reconciliation mapper (shown after range capture) -->
+                <div id="pf-recon-panel" class="card pf-recon-panel" hidden>
+                    <h3 class="card__title">Confirm broker columns</h3>
+                    <p class="card__body">Captured range: <span id="pf-recon-range"
+                            class="pf-recon-range"></span></p>
+                    <div id="pf-recon-mapping" class="pf-csv-mapping"></div>
+                    <div class="pf-csv-actions">
+                        <button id="pf-recon-run" class="btn btn--primary" type="button">Run Reconciliation</button>
+                        <button id="pf-recon-cancel" class="btn" type="button">Cancel</button>
+                    </div>
+                </div>
+
+                <!-- Holdings table -->
+                <p id="pf-empty" class="pf-empty">No holdings yet. Add one above or import a broker CSV.</p>
+                <div id="pf-table-wrap" class="pf-table-wrap" hidden>
+                    <table class="pf-table">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Company</th>
+                                <th>Qty</th>
+                                <th>Avg Cost</th>
+                                <th>Price</th>
+                                <th>Market Value</th>
+                                <th>P&amp;L $</th>
+                                <th>P&amp;L %</th>
+                                <th>Weight</th>
+                                <th aria-label="Actions"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="pf-table-body"></tbody>
+                    </table>
+                </div>
+
+                <div id="pf-recon-summary" class="pf-recon-summary" hidden></div>
             </section>
         </main>
 

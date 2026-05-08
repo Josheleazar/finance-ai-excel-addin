@@ -13,7 +13,7 @@
 import { initDashboardTab } from "./tabs/dashboard";
 import { initDataImportTab } from "./tabs/dataImport";
 import { initReconciliationTab } from "./tabs/reconciliation";
-import { initAiInsightsTab } from "./tabs/aiInsights";
+import { initPortfolioTab } from "./tabs/portfolio";
 import { loadApiKey, maskApiKey, saveApiKey } from "./services/settings";
 import { byId, clearStatus, setStatus } from "./services/ui";
 
@@ -40,7 +40,7 @@ function bootstrap(): void {
   initDashboardTab();
   initDataImportTab();
   initReconciliationTab();
-  initAiInsightsTab();
+  initPortfolioTab();
 
   clearStatus();
 }
