@@ -448,3 +448,140 @@ body {
   opacity: 0.5;
   pointer-events: none;
 }
+
+/* Reconciliation tab */
+.btn--small {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.recon__source {
+  padding: 10px;
+  margin-top: 10px;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  background: var(--fa-surface);
+}
+
+.recon__source + .recon__source {
+  margin-top: 10px;
+}
+
+.recon__source-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.recon__source-label {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.recon__source-hint {
+  font-weight: 400;
+  color: var(--fa-text-muted);
+  margin-left: 4px;
+}
+
+.recon__range {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  background: var(--fa-bg);
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  font-family: Consolas, Menlo, "Courier New", monospace;
+  font-size: 11px;
+  color: var(--fa-text-muted);
+  word-break: break-all;
+}
+
+.recon__range.is-set {
+  color: var(--fa-text);
+  border-color: var(--fa-primary);
+  background: #f5faff;
+}
+
+.recon__mapping {
+  display: flex;
+  flex-direction: column;
+}
+
+.recon__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--fa-text-muted);
+  margin-top: 4px;
+  cursor: pointer;
+}
+
+.recon__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.recon__summary {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  background: var(--fa-surface);
+  font-size: 12px;
+}
+
+.recon__summary h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.recon__summary-foot {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--fa-text-muted);
+}
+
+.recon__stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.recon__stat {
+  padding: 6px 4px;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  background: var(--fa-bg);
+  text-align: center;
+}
+
+.recon__stat-value {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.recon__stat-label {
+  font-size: 10px;
+  color: var(--fa-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: 2px;
+}
+
+.recon__stat--matched .recon__stat-value {
+  color: var(--fa-success);
+}
+
+.recon__stat--possible .recon__stat-value {
+  color: var(--fa-warning);
+}
+
+.recon__stat--unmatched .recon__stat-value {
+  color: var(--fa-error);
+}
