@@ -1,92 +1,134 @@
 /*
- * Reconciliation engine — pure, framework-free logic.
+ * Reconciliation engine — dynamic field-based matching.
  *
- * Given two lists of normalized rows ("Source A" and "Source B") it produces a
- * set of 1:1 pairings plus leftovers using weighted fuzzy matching.
+ * A reconciliation is defined by 1..N user-chosen fields. Each field picks
+ * one column from Source A and one from Source B and a match type:
  *
- * Design notes:
- *   - Each candidate pair is scored on three dimensions: amount, date, description.
- *   - Each dimension yields a 0..1 score (1 = perfect match). Missing data on a
- *     dimension yields 0.5 (neutral) so it neither confirms nor penalizes.
- *   - Combined confidence = weighted average (amount 0.5, date 0.25, desc 0.25).
- *     Finance teams care about the amount first; date & description are corroborating.
- *   - Assignment is greedy: sort candidate pairs by confidence descending, take each
- *     pair iff both sides are still unmatched and confidence >= possibleThreshold.
- *     This is not optimal in the Hungarian sense but is O(N*M log(N*M)) and good
- *     enough for typical reconciliation sizes.
- *   - Remaining rows are reported as Unmatched.
+ *   - exact   : case-insensitive string equality (toggleable case-sensitive).
+ *   - numeric : fixed $ + percentage tolerance; linear decay past the window.
+ *   - date    : day-level tolerance; linear decay past the window.
+ *   - fuzzy   : Levenshtein similarity 0..1 with a pass threshold.
  *
- * This module has no Office.js or DOM dependencies so it can be reused or unit tested.
+ * Each field carries a weight (low/medium/high → 1/2/3) and an optional
+ * "required" flag. When a required field fails its pass test the pair is
+ * either excluded entirely (hard gate, default) or capped to "Possible Match"
+ * (downgrade, opt-in).
+ *
+ * Confidence = weighted average of per-field sub-scores.
+ * Pairs above matchThreshold → "Matched" (unless capped).
+ * Pairs above possibleThreshold → "Possible Match".
+ * Pairs below possibleThreshold → not paired (row stays unmatched).
+ *
+ * Assignment is greedy 1:1 on descending confidence. This file has no
+ * Office.js or DOM dependencies so it can be unit tested in isolation.
  */
 
-export type MatchingMode = "strict" | "normal" | "loose" | "custom";
 export type MatchStatus = "Matched" | "Possible Match" | "Unmatched";
+export type FieldType = "exact" | "numeric" | "date" | "fuzzy";
+export type FieldWeight = "low" | "medium" | "high";
+export type Sensitivity = "strict" | "normal" | "loose";
 
-export interface Tolerances {
-  /** Absolute amount tolerance in dollars (or whatever currency). */
-  amountFixed: number;
-  /** Amount tolerance as a percentage of the larger of the two amounts (0..100). */
-  amountPct: number;
-  /** Whole-day tolerance applied to the absolute date delta. */
-  dateDays: number;
+export const MAX_FIELDS = 6;
+
+export interface FieldTolerance {
+  /** numeric: absolute tolerance in whatever units the column uses. */
+  amountFixed?: number;
+  /** numeric: percentage tolerance (0..100) applied to max(|a|, |b|, 1). */
+  amountPct?: number;
+  /** date: tolerance in whole days. */
+  dateDays?: number;
+  /** fuzzy: minimum Levenshtein similarity (0..1) to count as a "pass". */
+  minSimilarity?: number;
+  /** exact: when true, string comparison is case-sensitive. */
+  caseSensitive?: boolean;
 }
 
-/** Confidence thresholds that map a pair's score to a MatchStatus. */
+export interface FieldConfig {
+  /** Stable id used by the UI to key DOM rows. */
+  id: string;
+  /** User-facing label (used in output headers and notes). */
+  label: string;
+  type: FieldType;
+  /** Column index in Source A (0-based). -1 = not assigned. */
+  colA: number;
+  /** Column index in Source B (0-based). -1 = not assigned. */
+  colB: number;
+  weight: FieldWeight;
+  required: boolean;
+  /** If required & this field fails: true = cap to Possible, false = exclude pair. */
+  downgradeOnFail: boolean;
+  tolerance: FieldTolerance;
+}
+
 export interface Thresholds {
-  /** Confidence >= match => "Matched". */
   match: number;
-  /** possible <= confidence < match => "Possible Match"; below possible => not paired. */
   possible: number;
 }
 
-/** Preset tolerances per matching mode. `custom` stores the last user-entered values
- *  at init time and is otherwise just a "don't apply a preset" sentinel. */
-export const DEFAULT_TOLERANCES: { [K in MatchingMode]: Tolerances } = {
-  strict: { amountFixed: 0, amountPct: 0, dateDays: 0 },
-  normal: { amountFixed: 0.01, amountPct: 0, dateDays: 1 },
-  loose: { amountFixed: 1.0, amountPct: 1.0, dateDays: 3 },
-  custom: { amountFixed: 0.01, amountPct: 0, dateDays: 1 },
-};
-
-export const DEFAULT_THRESHOLDS: { [K in MatchingMode]: Thresholds } = {
+export const SENSITIVITY_THRESHOLDS: { [K in Sensitivity]: Thresholds } = {
   strict: { match: 0.95, possible: 0.85 },
   normal: { match: 0.85, possible: 0.7 },
   loose: { match: 0.7, possible: 0.55 },
-  custom: { match: 0.85, possible: 0.7 },
 };
 
-export interface NormalizedRow {
-  /** Zero-based position within the source data rows (excludes header). */
-  index: number;
+export const WEIGHT_VALUES: { [K in FieldWeight]: number } = {
+  low: 1,
+  medium: 2,
+  high: 3,
+};
+
+export function defaultToleranceForType(type: FieldType): FieldTolerance {
+  switch (type) {
+    case "exact":
+      return { caseSensitive: false };
+    case "numeric":
+      return { amountFixed: 0.01, amountPct: 0 };
+    case "date":
+      return { dateDays: 1 };
+    case "fuzzy":
+      return { minSimilarity: 0.6 };
+  }
+}
+
+export interface RawRow {
   /** 1-based Excel row number in the source worksheet, for user-friendly refs. */
   excelRow: number;
-  /** Parsed date as ms since epoch, or null if unparseable. */
-  dateMs: number | null;
-  /** Parsed amount, or null if unparseable. */
-  amount: number | null;
-  /** Lowercased, punctuation-stripped description for fuzzy compare. */
-  descriptionNorm: string;
-  /** Original-ish display values preserved for output. */
-  dateDisplay: string;
-  amountDisplay: number | string;
-  descriptionDisplay: string;
+  /** 0-based index within the data rows (post header trim, post blank skip). */
+  index: number;
+  /** Full row of raw cell values, indexable by column. */
+  cells: unknown[];
+}
+
+export interface FieldScore {
+  /** 0..1 sub-score contributed to confidence. */
+  score: number;
+  /** Whether the field "passes" its pass test (used for required-field gating). */
+  passed: boolean;
+}
+
+export interface PairScore {
+  /** If true, a required hard-gate field failed — skip this pair entirely. */
+  excluded: boolean;
+  /** If true, cap the final status at "Possible Match" regardless of confidence. */
+  capAsPossible: boolean;
+  /** Weighted average of per-field sub-scores. 0..1. */
+  confidence: number;
+  perField: FieldScore[];
 }
 
 export interface Match {
-  a: NormalizedRow;
-  b: NormalizedRow;
+  a: RawRow;
+  b: RawRow;
   confidence: number;
   status: MatchStatus;
-  amountDiff: number;
-  dateDiffDays: number;
-  descSimilarity: number;
+  perField: FieldScore[];
   notes: string;
 }
 
 export interface ReconciliationResult {
   matches: Match[];
-  unmatchedA: NormalizedRow[];
-  unmatchedB: NormalizedRow[];
+  unmatchedA: RawRow[];
+  unmatchedB: RawRow[];
   summary: {
     matched: number;
     possible: number;
@@ -97,17 +139,13 @@ export interface ReconciliationResult {
   };
 }
 
-/* ------------------------------- Normalizers ------------------------------ */
+/* ------------------------------- Parsers ------------------------------- */
 
 // Excel stores dates as serial days since 1899-12-30 (accounting for the 1900
 // leap-year bug). 25569 days separate 1899-12-30 from the Unix epoch.
 const EXCEL_EPOCH_DAYS_OFFSET = 25569;
 const MS_PER_DAY = 86400 * 1000;
 
-/**
- * Parse an Excel cell value as a date, returning ms since epoch or null.
- * Accepts Excel serial numbers, JS Date instances, and ISO/locale date strings.
- */
 export function parseDateCell(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date) {
@@ -115,7 +153,6 @@ export function parseDateCell(value: unknown): number | null {
     return isNaN(t) ? null : t;
   }
   if (typeof value === "number") {
-    // Valid Excel date serials are roughly 1..2958465 (0001-01-01 .. 9999-12-31).
     if (value < 1 || value > 2958465) return null;
     return Math.round((value - EXCEL_EPOCH_DAYS_OFFSET) * MS_PER_DAY);
   }
@@ -128,10 +165,6 @@ export function parseDateCell(value: unknown): number | null {
   return null;
 }
 
-/**
- * Parse an Excel cell value as a number. Tolerates common finance formatting:
- * "$1,234.56", "(123.45)" (accounting negatives), "1.234,56" (European style).
- */
 export function parseAmountCell(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "number") return isFinite(value) ? value : null;
@@ -148,10 +181,8 @@ export function parseAmountCell(value: unknown): number | null {
     s = s.slice(1, -1);
   }
 
-  // Drop currency symbols and whitespace.
   s = s.replace(/[\s$€£¥]/g, "");
 
-  // Disambiguate decimal separator when both "," and "." are present.
   const lastComma = s.lastIndexOf(",");
   const lastDot = s.lastIndexOf(".");
   if (lastComma >= 0 && lastDot >= 0) {
@@ -163,12 +194,9 @@ export function parseAmountCell(value: unknown): number | null {
       s = s.replace(/,/g, "");
     }
   } else if (lastComma >= 0) {
-    // Only commas. If there's a plausible decimal comma (1-2 digits after the
-    // last comma), treat it as decimal; otherwise as thousands separators.
     const tail = s.length - lastComma - 1;
     if (tail === 1 || tail === 2) {
       s = s.replace(/,/g, ".");
-      // If there were multiple commas, keep only the last as the decimal.
       const firstDot = s.indexOf(".");
       const lastDot2 = s.lastIndexOf(".");
       if (firstDot !== lastDot2) {
@@ -184,7 +212,6 @@ export function parseAmountCell(value: unknown): number | null {
   return negative ? -n : n;
 }
 
-/** Lowercase, collapse punctuation to single spaces, trim. */
 export function normalizeDescription(value: unknown): string {
   if (value === null || value === undefined) return "";
   return String(value)
@@ -194,9 +221,8 @@ export function normalizeDescription(value: unknown): string {
     .trim();
 }
 
-/* --------------------------- Levenshtein similarity --------------------------- */
+/* --------------------------- Levenshtein ---------------------------- */
 
-/** Classic Levenshtein edit distance. O(|a|*|b|) time, O(min(|a|,|b|)) space. */
 export function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length) return b.length;
@@ -220,7 +246,6 @@ export function levenshtein(a: string, b: string): number {
   return prev[a.length];
 }
 
-/** 1.0 = identical; 0.0 = completely different. Both empty strings => 1.0. */
 export function stringSimilarity(a: string, b: string): number {
   if (!a && !b) return 1;
   const maxLen = Math.max(a.length, b.length);
@@ -228,83 +253,127 @@ export function stringSimilarity(a: string, b: string): number {
   return 1 - levenshtein(a, b) / maxLen;
 }
 
-/* -------------------------- Per-dimension scoring -------------------------- */
+/* ------------------------- Per-field scoring ------------------------- */
 
-function amountScore(a: number | null, b: number | null, tol: Tolerances): number {
-  if (a === null || b === null) return 0.5;
-  const diff = Math.abs(a - b);
-  const magnitude = Math.max(Math.abs(a), Math.abs(b), 1);
-  const allowed = Math.max(tol.amountFixed, (tol.amountPct / 100) * magnitude);
-  if (diff <= allowed + 1e-9) return 1;
-  // Linear decay: reaches 0 when the excess equals the magnitude itself.
-  return Math.max(0, 1 - (diff - allowed) / magnitude);
+function coerce(value: number | undefined, fallback: number): number {
+  return typeof value === "number" && isFinite(value) ? value : fallback;
 }
-
-function dateScore(aMs: number | null, bMs: number | null, tol: Tolerances): number {
-  if (aMs === null || bMs === null) return 0.5;
-  const days = Math.abs(aMs - bMs) / MS_PER_DAY;
-  if (days <= tol.dateDays) return 1;
-  // Linear decay: fully penalized 30 days beyond the tolerance window.
-  return Math.max(0, 1 - (days - tol.dateDays) / 30);
-}
-
-function descriptionScore(a: string, b: string): number {
-  if (!a && !b) return 0.5;
-  if (!a || !b) return 0.3;
-  return stringSimilarity(a, b);
-}
-
-/** Compute the weighted confidence of pairing (a,b) plus its sub-scores. */
-export function pairConfidence(
-  a: NormalizedRow,
-  b: NormalizedRow,
-  tol: Tolerances
-): { confidence: number; amountS: number; dateS: number; descS: number } {
-  const amountS = amountScore(a.amount, b.amount, tol);
-  const dateS = dateScore(a.dateMs, b.dateMs, tol);
-  const descS = descriptionScore(a.descriptionNorm, b.descriptionNorm);
-  const confidence = amountS * 0.5 + dateS * 0.25 + descS * 0.25;
-  return { confidence, amountS, dateS, descS };
-}
-
-/* ------------------------------- Matching ------------------------------- */
 
 /**
- * Greedy 1:1 matching: compute confidences for all candidate pairs, sort desc,
- * accept in order as long as both sides remain free and we're above the
- * possible-match threshold.
+ * Score one field for a candidate (a, b) pair. Returns both a 0..1 sub-score
+ * and a `passed` flag used by required-field gating.
+ */
+export function scoreField(field: FieldConfig, valA: unknown, valB: unknown): FieldScore {
+  switch (field.type) {
+    case "exact": {
+      const caseSensitive = !!field.tolerance.caseSensitive;
+      const sa = valA === null || valA === undefined ? "" : String(valA).trim();
+      const sb = valB === null || valB === undefined ? "" : String(valB).trim();
+      if (!sa || !sb) return { score: 0, passed: false };
+      const eq = caseSensitive ? sa === sb : sa.toLowerCase() === sb.toLowerCase();
+      return eq ? { score: 1, passed: true } : { score: 0, passed: false };
+    }
+    case "numeric": {
+      const a = parseAmountCell(valA);
+      const b = parseAmountCell(valB);
+      if (a === null || b === null) return { score: 0, passed: false };
+      const fixed = coerce(field.tolerance.amountFixed, 0);
+      const pct = coerce(field.tolerance.amountPct, 0);
+      const magnitude = Math.max(Math.abs(a), Math.abs(b), 1);
+      const allowed = Math.max(fixed, (pct / 100) * magnitude);
+      const diff = Math.abs(a - b);
+      if (diff <= allowed + 1e-9) return { score: 1, passed: true };
+      return { score: Math.max(0, 1 - (diff - allowed) / magnitude), passed: false };
+    }
+    case "date": {
+      const a = parseDateCell(valA);
+      const b = parseDateCell(valB);
+      if (a === null || b === null) return { score: 0, passed: false };
+      const days = Math.abs(a - b) / MS_PER_DAY;
+      const tol = coerce(field.tolerance.dateDays, 0);
+      if (days <= tol) return { score: 1, passed: true };
+      // Linear decay: fully penalized 30 days beyond the tolerance window.
+      return { score: Math.max(0, 1 - (days - tol) / 30), passed: false };
+    }
+    case "fuzzy": {
+      const a = normalizeDescription(valA);
+      const b = normalizeDescription(valB);
+      // Treat any missing value as a hard 0 — otherwise a blank cell would
+      // bleed non-zero confidence into the weighted average for what is
+      // effectively a missing field.
+      if (!a || !b) return { score: 0, passed: false };
+      const sim = stringSimilarity(a, b);
+      const threshold = coerce(field.tolerance.minSimilarity, 0.6);
+      return { score: sim, passed: sim >= threshold };
+    }
+  }
+}
+
+/**
+ * Score a candidate pair across all fields, applying required-field gating.
+ */
+export function scorePair(fields: FieldConfig[], rowA: RawRow, rowB: RawRow): PairScore {
+  const perField: FieldScore[] = new Array(fields.length);
+  let excluded = false;
+  let capAsPossible = false;
+  let weightedSum = 0;
+  let weightSum = 0;
+
+  for (let k = 0; k < fields.length; k++) {
+    const f = fields[k];
+    const valA = f.colA >= 0 ? rowA.cells[f.colA] : undefined;
+    const valB = f.colB >= 0 ? rowB.cells[f.colB] : undefined;
+    const s = scoreField(f, valA, valB);
+    perField[k] = s;
+
+    if (f.required && !s.passed) {
+      if (f.downgradeOnFail) capAsPossible = true;
+      else excluded = true;
+    }
+
+    const w = WEIGHT_VALUES[f.weight];
+    weightedSum += s.score * w;
+    weightSum += w;
+  }
+
+  const confidence = weightSum > 0 ? weightedSum / weightSum : 0;
+  return { excluded, capAsPossible, confidence, perField };
+}
+
+/* ------------------------------ Matching ------------------------------ */
+
+/**
+ * Greedy 1:1 matching: compute confidence for every non-excluded candidate
+ * pair at or above the possible threshold, sort desc, accept in order as
+ * long as both sides remain free.
  */
 export function reconcile(
-  sourceA: NormalizedRow[],
-  sourceB: NormalizedRow[],
-  tol: Tolerances,
+  sourceA: RawRow[],
+  sourceB: RawRow[],
+  fields: FieldConfig[],
   thresholds: Thresholds
 ): ReconciliationResult {
   interface Candidate {
     i: number;
     j: number;
     confidence: number;
-    amountS: number;
-    dateS: number;
-    descS: number;
+    capAsPossible: boolean;
+    perField: FieldScore[];
   }
 
   const candidates: Candidate[] = [];
   for (let i = 0; i < sourceA.length; i++) {
-    const a = sourceA[i];
     for (let j = 0; j < sourceB.length; j++) {
-      const b = sourceB[j];
-      const pc = pairConfidence(a, b, tol);
-      if (pc.confidence >= thresholds.possible) {
-        candidates.push({
-          i,
-          j,
-          confidence: pc.confidence,
-          amountS: pc.amountS,
-          dateS: pc.dateS,
-          descS: pc.descS,
-        });
-      }
+      const ps = scorePair(fields, sourceA[i], sourceB[j]);
+      if (ps.excluded) continue;
+      if (ps.confidence < thresholds.possible) continue;
+      candidates.push({
+        i,
+        j,
+        confidence: ps.confidence,
+        capAsPossible: ps.capAsPossible,
+        perField: ps.perField,
+      });
     }
   }
   candidates.sort((x, y) => y.confidence - x.confidence);
@@ -316,29 +385,23 @@ export function reconcile(
   for (let k = 0; k < candidates.length; k++) {
     const c = candidates[k];
     if (usedA[c.i] || usedB[c.j]) continue;
-    const a = sourceA[c.i];
-    const b = sourceB[c.j];
-    const status: MatchStatus = c.confidence >= thresholds.match ? "Matched" : "Possible Match";
-    const amountDiff = (a.amount === null ? 0 : a.amount) - (b.amount === null ? 0 : b.amount);
-    const dateDiffDays =
-      a.dateMs !== null && b.dateMs !== null ? Math.round((a.dateMs - b.dateMs) / MS_PER_DAY) : 0;
+    const isMatched = c.confidence >= thresholds.match && !c.capAsPossible;
+    const status: MatchStatus = isMatched ? "Matched" : "Possible Match";
     matches.push({
-      a,
-      b,
+      a: sourceA[c.i],
+      b: sourceB[c.j],
       confidence: c.confidence,
       status,
-      amountDiff,
-      dateDiffDays,
-      descSimilarity: c.descS,
-      notes: buildMatchNotes(c.amountS, c.dateS, c.descS, amountDiff, dateDiffDays),
+      perField: c.perField,
+      notes: buildNotes(fields, c.perField, c.capAsPossible),
     });
     usedA[c.i] = true;
     usedB[c.j] = true;
   }
 
-  const unmatchedA: NormalizedRow[] = [];
+  const unmatchedA: RawRow[] = [];
   for (let i = 0; i < sourceA.length; i++) if (!usedA[i]) unmatchedA.push(sourceA[i]);
-  const unmatchedB: NormalizedRow[] = [];
+  const unmatchedB: RawRow[] = [];
   for (let j = 0; j < sourceB.length; j++) if (!usedB[j]) unmatchedB.push(sourceB[j]);
 
   let matched = 0;
@@ -363,26 +426,17 @@ export function reconcile(
   };
 }
 
-function buildMatchNotes(
-  _amountS: number,
-  _dateS: number,
-  descS: number,
-  amountDiff: number,
-  dateDiffDays: number
-): string {
+function buildNotes(fields: FieldConfig[], perField: FieldScore[], capped: boolean): string {
   const parts: string[] = [];
-  if (Math.abs(amountDiff) > 1e-9) {
-    const sign = amountDiff >= 0 ? "+" : "-";
-    parts.push(`Amount ${sign}${Math.abs(amountDiff).toFixed(2)}`);
+  if (capped) parts.push("Capped to Possible (required field mismatch)");
+  for (let k = 0; k < fields.length; k++) {
+    const f = fields[k];
+    const s = perField[k];
+    if (s.score < 1) {
+      const tag = f.required && !s.passed ? " ⚠" : "";
+      parts.push(`${f.label}: ${Math.round(s.score * 100)}%${tag}`);
+    }
   }
-  if (dateDiffDays !== 0) {
-    const sign = dateDiffDays > 0 ? "+" : "";
-    const unit = Math.abs(dateDiffDays) === 1 ? "day" : "days";
-    parts.push(`${sign}${dateDiffDays} ${unit}`);
-  }
-  if (descS < 1) {
-    parts.push(`Desc ${Math.round(descS * 100)}%`);
-  }
-  if (!parts.length) parts.push("Exact match");
+  if (!parts.length) parts.push("All fields perfect");
   return parts.join(" · ");
 }

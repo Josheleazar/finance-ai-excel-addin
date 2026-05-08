@@ -1,21 +1,31 @@
 /*
- * API key storage.
+ * Settings persistence.
  *
- * Primary: Office.context.document.settings (persisted per workbook, survives reopen).
- * Fallback: window.localStorage (per browser/origin; used if document settings unavailable).
+ *   - API key (Finnhub).
+ *   - Reconciliation defaults: sensitivity + dynamic field configuration.
  *
- * Neither of these is "secure" in the cryptographic sense. For production, prefer
- * OfficeRuntime.storage (shared runtime) or an auth flow that keeps the key server-side.
+ * Primary store: Office.context.document.settings (workbook-scoped, survives reopen).
+ * Fallback: window.localStorage (per browser/origin). Neither is cryptographically
+ * secure; for production prefer a server-side proxy or OfficeRuntime.storage.
  */
 
 /* global Office, window */
 
-import { MatchingMode } from "./reconciliation";
+import {
+  FieldTolerance,
+  FieldType,
+  FieldWeight,
+  MAX_FIELDS,
+  Sensitivity,
+  defaultToleranceForType,
+} from "./reconciliation";
 
 const SETTING_KEY = "finalysis.finnhubApiKey";
 const LOCAL_STORAGE_KEY = "finalysis.finnhubApiKey";
-const RECON_SETTING_KEY = "finalysis.reconDefaults";
-const RECON_LOCAL_STORAGE_KEY = "finalysis.reconDefaults";
+// Bumped to v2 when the reconciliation model switched from fixed
+// Date/Amount/Description to dynamic fields — incompatible shape.
+const RECON_SETTING_KEY = "finalysis.reconDefaults.v2";
+const RECON_LOCAL_STORAGE_KEY = "finalysis.reconDefaults.v2";
 
 function hasDocumentSettings(): boolean {
   try {
@@ -88,42 +98,131 @@ export function maskApiKey(apiKey: string): string {
 
 /* -------------------- Reconciliation defaults -------------------- */
 
-export interface ReconSettings {
-  mode: MatchingMode;
-  amountFixed: number;
-  amountPct: number;
-  dateDays: number;
+/**
+ * The persisted shape of a single field. Omits transient column indexes
+ * (colA/colB) since those are tied to a specific captured range.
+ */
+export interface PersistedField {
+  id: string;
+  label: string;
+  type: FieldType;
+  weight: FieldWeight;
+  required: boolean;
+  downgradeOnFail: boolean;
+  tolerance: FieldTolerance;
 }
 
+export interface ReconSettings {
+  sensitivity: Sensitivity;
+  fields: PersistedField[];
+}
+
+/** Sensible starting configuration for a transactional bank/ledger reconciliation. */
 export const DEFAULT_RECON_SETTINGS: ReconSettings = {
-  mode: "normal",
-  amountFixed: 0.01,
-  amountPct: 0,
-  dateDays: 1,
+  sensitivity: "normal",
+  fields: [
+    {
+      id: "f1",
+      label: "Date",
+      type: "date",
+      weight: "medium",
+      required: false,
+      downgradeOnFail: false,
+      tolerance: defaultToleranceForType("date"),
+    },
+    {
+      id: "f2",
+      label: "Amount",
+      type: "numeric",
+      weight: "high",
+      required: true,
+      downgradeOnFail: false,
+      tolerance: defaultToleranceForType("numeric"),
+    },
+    {
+      id: "f3",
+      label: "Description",
+      type: "fuzzy",
+      weight: "medium",
+      required: false,
+      downgradeOnFail: false,
+      tolerance: defaultToleranceForType("fuzzy"),
+    },
+  ],
 };
+
+const ALLOWED_TYPES: FieldType[] = ["exact", "numeric", "date", "fuzzy"];
+const ALLOWED_WEIGHTS: FieldWeight[] = ["low", "medium", "high"];
+const ALLOWED_SENSITIVITIES: Sensitivity[] = ["strict", "normal", "loose"];
+
+function coerceNonNegative(v: unknown, fallback: number): number {
+  return typeof v === "number" && isFinite(v) && v >= 0 ? v : fallback;
+}
+
+function coerceTolerance(raw: unknown, type: FieldType): FieldTolerance {
+  const def = defaultToleranceForType(type);
+  const src = raw && typeof raw === "object" ? (raw as { [k: string]: unknown }) : {};
+  const t: FieldTolerance = {};
+  if (type === "numeric") {
+    t.amountFixed = coerceNonNegative(src.amountFixed, def.amountFixed || 0);
+    t.amountPct = coerceNonNegative(src.amountPct, def.amountPct || 0);
+  } else if (type === "date") {
+    t.dateDays = Math.floor(coerceNonNegative(src.dateDays, def.dateDays || 0));
+  } else if (type === "fuzzy") {
+    const n = coerceNonNegative(src.minSimilarity, def.minSimilarity || 0);
+    t.minSimilarity = Math.max(0, Math.min(1, n));
+  } else if (type === "exact") {
+    t.caseSensitive = !!src.caseSensitive;
+  }
+  return t;
+}
+
+function coerceField(raw: unknown, i: number): PersistedField | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as { [k: string]: unknown };
+  const type =
+    typeof r.type === "string" && ALLOWED_TYPES.indexOf(r.type as FieldType) >= 0
+      ? (r.type as FieldType)
+      : null;
+  if (!type) return null;
+  const weight =
+    typeof r.weight === "string" && ALLOWED_WEIGHTS.indexOf(r.weight as FieldWeight) >= 0
+      ? (r.weight as FieldWeight)
+      : "medium";
+  return {
+    id: typeof r.id === "string" && r.id ? r.id : `f${i + 1}`,
+    label: typeof r.label === "string" && r.label ? r.label : `Field ${i + 1}`,
+    type,
+    weight,
+    required: !!r.required,
+    downgradeOnFail: !!r.downgradeOnFail,
+    tolerance: coerceTolerance(r.tolerance, type),
+  };
+}
 
 function coerceReconSettings(raw: unknown): ReconSettings {
   const src = (raw && typeof raw === "object" ? raw : {}) as { [k: string]: unknown };
-  const mode = src.mode;
-  const allowedModes: MatchingMode[] = ["strict", "normal", "loose", "custom"];
-  return {
-    mode:
-      typeof mode === "string" && allowedModes.indexOf(mode as MatchingMode) >= 0
-        ? (mode as MatchingMode)
-        : DEFAULT_RECON_SETTINGS.mode,
-    amountFixed:
-      typeof src.amountFixed === "number" && isFinite(src.amountFixed) && src.amountFixed >= 0
-        ? src.amountFixed
-        : DEFAULT_RECON_SETTINGS.amountFixed,
-    amountPct:
-      typeof src.amountPct === "number" && isFinite(src.amountPct) && src.amountPct >= 0
-        ? src.amountPct
-        : DEFAULT_RECON_SETTINGS.amountPct,
-    dateDays:
-      typeof src.dateDays === "number" && isFinite(src.dateDays) && src.dateDays >= 0
-        ? Math.floor(src.dateDays)
-        : DEFAULT_RECON_SETTINGS.dateDays,
-  };
+  const sensitivity =
+    typeof src.sensitivity === "string" &&
+    ALLOWED_SENSITIVITIES.indexOf(src.sensitivity as Sensitivity) >= 0
+      ? (src.sensitivity as Sensitivity)
+      : DEFAULT_RECON_SETTINGS.sensitivity;
+
+  let fields: PersistedField[] = [];
+  if (Array.isArray(src.fields)) {
+    for (let i = 0; i < src.fields.length && fields.length < MAX_FIELDS; i++) {
+      const f = coerceField(src.fields[i], fields.length);
+      if (f) fields.push(f);
+    }
+  }
+  if (!fields.length) {
+    // No saved / invalid fields — fall back to the baked-in defaults.
+    fields = DEFAULT_RECON_SETTINGS.fields.map((f) => ({
+      ...f,
+      tolerance: { ...f.tolerance },
+    }));
+  }
+  return { sensitivity, fields };
 }
 
 export function loadReconSettings(): ReconSettings {
@@ -139,9 +238,15 @@ export function loadReconSettings(): ReconSettings {
       return coerceReconSettings(JSON.parse(raw));
     }
   } catch {
-    // localStorage disabled or JSON invalid — fall back to defaults.
+    // localStorage disabled or JSON invalid — fall through to defaults.
   }
-  return { ...DEFAULT_RECON_SETTINGS };
+  return {
+    sensitivity: DEFAULT_RECON_SETTINGS.sensitivity,
+    fields: DEFAULT_RECON_SETTINGS.fields.map((f) => ({
+      ...f,
+      tolerance: { ...f.tolerance },
+    })),
+  };
 }
 
 export async function saveReconSettings(settings: ReconSettings): Promise<void> {

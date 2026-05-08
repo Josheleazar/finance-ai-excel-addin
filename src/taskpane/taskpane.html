@@ -123,102 +123,63 @@
             <!-- Reconciliation -->
             <section id="tab-reconciliation" class="tab-panel" role="tabpanel" hidden>
                 <h2 class="panel__title">Reconciliation</h2>
-                <p class="panel__subtitle">Compare two transaction lists and surface matches, discrepancies, and
-                    gaps.</p>
+                <p class="panel__subtitle">Define custom matching fields and compare two ranges. Works for bank
+                    reconciliation, invoice matching, position checks, anything tabular.</p>
 
                 <!-- Step 1: pick two ranges -->
                 <div class="card">
                     <h3 class="card__title">1. Select ranges</h3>
-                    <p class="card__body">Highlight your data in the sheet — include a header row for best
-                        auto-detection — then click the button.</p>
+                    <p class="card__body">Highlight your data in the sheet (include headers for best column
+                        detection), then click the button.</p>
 
-                    <!-- Source A -->
                     <div class="recon__source">
                         <div class="recon__source-head">
                             <span class="recon__source-label">Source A
-                                <span class="recon__source-hint">external (bank, Finnhub, CSV)</span>
+                                <span class="recon__source-hint">e.g. bank, Finnhub, CSV</span>
                             </span>
                             <button id="recon-capture-a" class="btn btn--small" type="button">Use selection</button>
                         </div>
                         <p id="recon-range-a" class="recon__range">No range selected.</p>
-                        <div id="recon-map-a" class="recon__mapping" hidden>
-                            <label class="field">
-                                <span class="field__label">Date column</span>
-                                <select id="recon-col-a-date" class="field__input"></select>
-                            </label>
-                            <label class="field">
-                                <span class="field__label">Amount column</span>
-                                <select id="recon-col-a-amount" class="field__input"></select>
-                            </label>
-                            <label class="field">
-                                <span class="field__label">Description column</span>
-                                <select id="recon-col-a-desc" class="field__input"></select>
-                            </label>
-                            <label class="recon__toggle">
-                                <input id="recon-header-a" type="checkbox" checked />
-                                First row is a header
-                            </label>
-                        </div>
+                        <label class="recon__toggle">
+                            <input id="recon-header-a" type="checkbox" checked />
+                            First row is a header
+                        </label>
                     </div>
 
-                    <!-- Source B -->
                     <div class="recon__source">
                         <div class="recon__source-head">
                             <span class="recon__source-label">Source B
-                                <span class="recon__source-hint">internal ledger / books</span>
+                                <span class="recon__source-hint">e.g. internal ledger / books</span>
                             </span>
                             <button id="recon-capture-b" class="btn btn--small" type="button">Use selection</button>
                         </div>
                         <p id="recon-range-b" class="recon__range">No range selected.</p>
-                        <div id="recon-map-b" class="recon__mapping" hidden>
-                            <label class="field">
-                                <span class="field__label">Date column</span>
-                                <select id="recon-col-b-date" class="field__input"></select>
-                            </label>
-                            <label class="field">
-                                <span class="field__label">Amount column</span>
-                                <select id="recon-col-b-amount" class="field__input"></select>
-                            </label>
-                            <label class="field">
-                                <span class="field__label">Description column</span>
-                                <select id="recon-col-b-desc" class="field__input"></select>
-                            </label>
-                            <label class="recon__toggle">
-                                <input id="recon-header-b" type="checkbox" checked />
-                                First row is a header
-                            </label>
-                        </div>
+                        <label class="recon__toggle">
+                            <input id="recon-header-b" type="checkbox" checked />
+                            First row is a header
+                        </label>
                     </div>
                 </div>
 
-                <!-- Step 2: tolerances -->
+                <!-- Step 2: matching fields -->
                 <div class="card">
-                    <h3 class="card__title">2. Matching tolerances</h3>
-                    <label class="field">
-                        <span class="field__label">Mode</span>
-                        <select id="recon-mode" class="field__input">
-                            <option value="strict">Strict — exact matches</option>
-                            <option value="normal" selected>Normal — small rounding &amp; 1-day drift</option>
-                            <option value="loose">Loose — fuzzy; good for messy data</option>
-                            <option value="custom">Custom</option>
-                        </select>
-                    </label>
-                    <div class="row row--2">
-                        <label class="field">
-                            <span class="field__label">Amount ± $</span>
-                            <input id="recon-amt-fixed" class="field__input" type="number" min="0" step="0.01"
-                                value="0.01" />
-                        </label>
-                        <label class="field">
-                            <span class="field__label">Amount ± %</span>
-                            <input id="recon-amt-pct" class="field__input" type="number" min="0" step="0.1"
-                                value="0" />
-                        </label>
+                    <div class="recon-fields-head">
+                        <h3 class="card__title">2. Matching fields</h3>
+                        <span id="recon-fields-count" class="recon-fields-count">0 of 6</span>
+                        <button id="recon-add-field" class="btn btn--small" type="button">+ Add field</button>
                     </div>
-                    <label class="field">
-                        <span class="field__label">Date ± days</span>
-                        <input id="recon-date-days" class="field__input" type="number" min="0" step="1"
-                            value="1" />
+                    <p class="card__body">Each field maps one column in A to one in B. Mark a field Required to
+                        block non-matches (or downgrade to Possible via the Advanced panel).</p>
+                    <div id="recon-fields" class="recon-fields"></div>
+                    <p id="recon-fields-empty" class="recon-fields-empty" hidden>No fields yet. Click
+                        <strong>+ Add field</strong> above.</p>
+                    <label class="field recon__sensitivity">
+                        <span class="field__label">Sensitivity</span>
+                        <select id="recon-sensitivity" class="field__input">
+                            <option value="strict">Strict — require near-perfect matches</option>
+                            <option value="normal" selected>Normal — tolerant of small differences</option>
+                            <option value="loose">Loose — aggressive pairing for messy data</option>
+                        </select>
                     </label>
                 </div>
 

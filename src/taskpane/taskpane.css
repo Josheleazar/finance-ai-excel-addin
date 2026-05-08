@@ -585,3 +585,219 @@ body {
 .recon__stat--unmatched .recon__stat-value {
   color: var(--fa-error);
 }
+
+/* Dynamic field list */
+.recon-fields-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.recon-fields-head .card__title {
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.recon-fields-count {
+  font-size: 11px;
+  color: var(--fa-text-muted);
+}
+
+.recon-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.recon-fields-empty {
+  margin: 6px 0;
+  padding: 10px;
+  border: 1px dashed var(--fa-border);
+  border-radius: var(--fa-radius);
+  color: var(--fa-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.recon__sensitivity {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+/* Field row */
+.recon-field {
+  padding: 8px 10px 10px;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  background: var(--fa-surface);
+}
+
+.recon-field__head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.recon-field__label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.recon-field__type {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 110px;
+}
+
+.recon-field__remove {
+  flex: 0 0 auto;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+}
+
+.recon-field__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recon-field__cols {
+  margin-bottom: 0;
+}
+
+.recon-field__meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.recon-field__weight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.recon-field__weight-label {
+  font-size: 11px;
+  color: var(--fa-text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.recon-field__weight-chips {
+  display: inline-flex;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  overflow: hidden;
+}
+
+.chip {
+  padding: 3px 8px;
+  border: none;
+  border-right: 1px solid var(--fa-border);
+  background: var(--fa-bg);
+  color: var(--fa-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.chip:last-child {
+  border-right: none;
+}
+
+.chip:hover {
+  background: var(--fa-surface-2);
+  color: var(--fa-text);
+}
+
+.chip.is-active {
+  background: var(--fa-primary);
+  color: #fff;
+}
+
+.recon-field__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--fa-text);
+  cursor: pointer;
+}
+
+.recon-field__adv-toggle {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--fa-primary);
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.recon-field__adv-toggle:hover {
+  text-decoration: underline;
+}
+
+.recon-field__advanced {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--fa-bg);
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.recon-field__tol-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.recon-field__tol-row .field {
+  margin-bottom: 0;
+}
+
+.recon-field__tol-row > label:only-child {
+  grid-column: 1 / -1;
+}
+
+.recon-field__fail {
+  margin: 0;
+  padding: 6px 8px 8px;
+  border: 1px solid var(--fa-border);
+  border-radius: var(--fa-radius);
+}
+
+.recon-field__fail legend {
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fa-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.recon-field__radio {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  margin: 2px 0;
+  cursor: pointer;
+}

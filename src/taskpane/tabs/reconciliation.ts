@@ -1,57 +1,63 @@
 /*
- * Reconciliation tab — orchestrates the end-to-end user flow:
+ * Reconciliation tab — orchestrates the end-to-end user flow.
  *
- *   1. User selects a range in Excel and clicks "Use selection" for Source A or B.
- *   2. We auto-detect whether the first row is a header and which columns map to
- *      Date / Amount / Description; the user can override via dropdowns.
- *   3. User picks a matching mode preset (Strict / Normal / Loose / Custom) and
- *      fine-tunes amount & date tolerances.
- *   4. "Run Reconciliation" reads both ranges, runs the fuzzy matcher, and writes
- *      a results worksheet with a summary block and color-coded rows.
- *   5. "Save as Default" persists the current tolerance configuration.
+ * Flow:
+ *   1. User captures two Excel ranges (Source A & B) via "Use selection".
+ *   2. User defines 1..6 matching fields. Each field picks one column from A
+ *      and one from B, plus a type (exact / numeric / date / fuzzy), weight,
+ *      and an optional Required flag. Required fields hard-gate non-matches
+ *      by default; the advanced panel offers a "downgrade" opt-in instead.
+ *   3. User picks a Sensitivity (Strict / Normal / Loose) which controls the
+ *      match / possible confidence thresholds.
+ *   4. "Run Reconciliation" reads both ranges, scores every candidate pair,
+ *      greedy-assigns matches, and writes a results worksheet.
+ *   5. "Save as Default" persists the current field configuration.
  *
- * All Office.js calls live in services/reconcileExcel; all matching logic lives
- * in services/reconciliation. This file is the glue (DOM <-> services).
+ * The matching engine lives in services/reconciliation (pure, testable).
+ * Excel I/O lives in services/reconcileExcel. This file is the DOM glue.
  */
 
-/* global HTMLButtonElement, HTMLInputElement, HTMLSelectElement, document */
+/* global HTMLButtonElement, HTMLInputElement, HTMLSelectElement, HTMLElement, document */
 
-import { byId, inputValue, setStatus } from "../services/ui";
+import { byId, setStatus } from "../services/ui";
+import { PersistedField, loadReconSettings, saveReconSettings } from "../services/settings";
 import {
-  DEFAULT_RECON_SETTINGS,
-  ReconSettings,
-  loadReconSettings,
-  saveReconSettings,
-} from "../services/settings";
-import {
-  DEFAULT_THRESHOLDS,
-  DEFAULT_TOLERANCES,
-  MatchingMode,
+  FieldConfig,
+  FieldType,
+  FieldWeight,
+  MAX_FIELDS,
   ReconciliationResult,
-  Tolerances,
+  SENSITIVITY_THRESHOLDS,
+  Sensitivity,
+  defaultToleranceForType,
   reconcile,
 } from "../services/reconciliation";
 import {
-  ColumnMapping,
   RangeDescriptor,
-  autoDetectColumns,
+  buildRawRows,
   captureCurrentSelection,
+  columnIndexToLetter,
+  detectColumnForField,
   looksLikeHeader,
-  normalizeRows,
   readRangeValues,
   writeReconciliationSheet,
 } from "../services/reconcileExcel";
 
 type Side = "a" | "b";
 
-interface SideState {
-  descriptor: RangeDescriptor | null;
-  mapping: ColumnMapping | null;
-}
-
-const state: { [K in Side]: SideState } = {
-  a: { descriptor: null, mapping: null },
-  b: { descriptor: null, mapping: null },
+const state: {
+  a: { descriptor: RangeDescriptor | null };
+  b: { descriptor: RangeDescriptor | null };
+  fields: FieldConfig[];
+  sensitivity: Sensitivity;
+  /** Which fields have their "Advanced" panel expanded. UI-only. */
+  expanded: { [fieldId: string]: boolean };
+} = {
+  a: { descriptor: null },
+  b: { descriptor: null },
+  fields: [],
+  sensitivity: "normal",
+  expanded: {},
 };
 
 export function initReconciliationTab(): void {
@@ -59,24 +65,25 @@ export function initReconciliationTab(): void {
   byId<HTMLButtonElement>("recon-capture-a").addEventListener("click", () => void captureFor("a"));
   byId<HTMLButtonElement>("recon-capture-b").addEventListener("click", () => void captureFor("b"));
 
-  // First-row-is-header toggles re-run auto-detection
-  byId<HTMLInputElement>("recon-header-a").addEventListener("change", () => recomputeMapping("a"));
-  byId<HTMLInputElement>("recon-header-b").addEventListener("change", () => recomputeMapping("b"));
+  // Header toggles — re-run auto-detection for any field whose column is unset.
+  byId<HTMLInputElement>("recon-header-a").addEventListener("change", () => {
+    autoDetectMissingColumns("a");
+    renderFields();
+  });
+  byId<HTMLInputElement>("recon-header-b").addEventListener("change", () => {
+    autoDetectMissingColumns("b");
+    renderFields();
+  });
 
-  // Matching mode presets
-  byId<HTMLSelectElement>("recon-mode").addEventListener("change", onModeChange);
+  // Sensitivity
+  byId<HTMLSelectElement>("recon-sensitivity").addEventListener("change", () => {
+    state.sensitivity = byId<HTMLSelectElement>("recon-sensitivity").value as Sensitivity;
+  });
 
-  // Any manual tolerance edit switches the mode select to "custom" so the user
-  // knows they're no longer on a preset.
-  const tolInputIds = ["recon-amt-fixed", "recon-amt-pct", "recon-date-days"];
-  for (let i = 0; i < tolInputIds.length; i++) {
-    byId<HTMLInputElement>(tolInputIds[i]).addEventListener("input", () => {
-      const sel = byId<HTMLSelectElement>("recon-mode");
-      if (sel.value !== "custom") sel.value = "custom";
-    });
-  }
+  // Field list actions
+  byId<HTMLButtonElement>("recon-add-field").addEventListener("click", () => addField());
 
-  // Actions
+  // Run / Save
   byId<HTMLButtonElement>("recon-run-btn").addEventListener(
     "click",
     () => void runReconciliation()
@@ -86,45 +93,101 @@ export function initReconciliationTab(): void {
     () => void saveDefaults()
   );
 
-  // Hydrate form from persisted defaults (or baked-in defaults if none saved).
-  applyReconSettings(loadReconSettings());
+  // Hydrate from persisted settings (or baked-in defaults if none saved).
+  const saved = loadReconSettings();
+  state.sensitivity = saved.sensitivity;
+  state.fields = saved.fields.map(persistedToConfig);
+  byId<HTMLSelectElement>("recon-sensitivity").value = state.sensitivity;
+  renderFields();
 }
 
-/* --------------------- Tolerance inputs & presets --------------------- */
+/* ---------------------- Field model helpers ---------------------- */
 
-function onModeChange(): void {
-  const mode = byId<HTMLSelectElement>("recon-mode").value as MatchingMode;
-  if (mode === "custom") return; // leave the user's values alone
-  const tol = DEFAULT_TOLERANCES[mode];
-  byId<HTMLInputElement>("recon-amt-fixed").value = String(tol.amountFixed);
-  byId<HTMLInputElement>("recon-amt-pct").value = String(tol.amountPct);
-  byId<HTMLInputElement>("recon-date-days").value = String(tol.dateDays);
+function makeFieldId(): string {
+  return `f${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 }
 
-function readFormTolerances(): { mode: MatchingMode; tol: Tolerances } {
-  const mode = byId<HTMLSelectElement>("recon-mode").value as MatchingMode;
-  const tol: Tolerances = {
-    amountFixed: parseNonNegative("recon-amt-fixed", DEFAULT_RECON_SETTINGS.amountFixed),
-    amountPct: parseNonNegative("recon-amt-pct", DEFAULT_RECON_SETTINGS.amountPct),
-    dateDays: Math.floor(parseNonNegative("recon-date-days", DEFAULT_RECON_SETTINGS.dateDays)),
+function persistedToConfig(p: PersistedField): FieldConfig {
+  return {
+    id: p.id,
+    label: p.label,
+    type: p.type,
+    colA: -1,
+    colB: -1,
+    weight: p.weight,
+    required: p.required,
+    downgradeOnFail: p.downgradeOnFail,
+    tolerance: { ...p.tolerance },
   };
-  return { mode, tol };
 }
 
-function parseNonNegative(id: string, fallback: number): number {
-  const raw = inputValue(id);
-  const n = parseFloat(raw);
-  return isFinite(n) && n >= 0 ? n : fallback;
+function configToPersisted(f: FieldConfig): PersistedField {
+  return {
+    id: f.id,
+    label: f.label,
+    type: f.type,
+    weight: f.weight,
+    required: f.required,
+    downgradeOnFail: f.downgradeOnFail,
+    tolerance: { ...f.tolerance },
+  };
 }
 
-function applyReconSettings(s: ReconSettings): void {
-  byId<HTMLSelectElement>("recon-mode").value = s.mode;
-  byId<HTMLInputElement>("recon-amt-fixed").value = String(s.amountFixed);
-  byId<HTMLInputElement>("recon-amt-pct").value = String(s.amountPct);
-  byId<HTMLInputElement>("recon-date-days").value = String(s.dateDays);
+function addField(): void {
+  if (state.fields.length >= MAX_FIELDS) return;
+  const n = state.fields.length + 1;
+  const field: FieldConfig = {
+    id: makeFieldId(),
+    label: `Field ${n}`,
+    type: "fuzzy",
+    colA: -1,
+    colB: -1,
+    weight: "medium",
+    required: false,
+    downgradeOnFail: false,
+    tolerance: defaultToleranceForType("fuzzy"),
+  };
+  state.fields.push(field);
+  autoDetectMissingColumns("a");
+  autoDetectMissingColumns("b");
+  renderFields();
 }
 
-/* ------------------- Range capture & column mapping UI ------------------- */
+function removeField(fieldId: string): void {
+  state.fields = state.fields.filter((f) => f.id !== fieldId);
+  delete state.expanded[fieldId];
+  renderFields();
+}
+
+/** Fill in colA/colB for any field whose current pick is unset or out-of-range.
+ *  Tracks columns already claimed by other fields on the same side so the
+ *  default seed of 3 fields doesn't collapse onto a single column when the
+ *  heuristics can't decide. */
+function autoDetectMissingColumns(side: Side): void {
+  const desc = state[side].descriptor;
+  if (!desc) return;
+  const hasHeader = byId<HTMLInputElement>(`recon-header-${side}`).checked;
+
+  // Seed `taken` with columns already manually/previously assigned on this side.
+  const taken: { [col: number]: boolean } = {};
+  for (let k = 0; k < state.fields.length; k++) {
+    const current = side === "a" ? state.fields[k].colA : state.fields[k].colB;
+    if (current >= 0 && current < desc.columnCount) taken[current] = true;
+  }
+
+  for (let k = 0; k < state.fields.length; k++) {
+    const f = state.fields[k];
+    const current = side === "a" ? f.colA : f.colB;
+    if (current < 0 || current >= desc.columnCount) {
+      const suggested = detectColumnForField(f, desc, hasHeader, taken);
+      if (side === "a") f.colA = suggested;
+      else f.colB = suggested;
+      if (suggested >= 0) taken[suggested] = true;
+    }
+  }
+}
+
+/* -------------------------- Range capture -------------------------- */
 
 async function captureFor(side: Side): Promise<void> {
   const btn = byId<HTMLButtonElement>(`recon-capture-${side}`);
@@ -134,13 +197,21 @@ async function captureFor(side: Side): Promise<void> {
     const desc = await captureCurrentSelection();
     state[side].descriptor = desc;
 
+    // Best-effort header detection as a starting point; user can toggle after.
     const hasHeader = looksLikeHeader(desc.firstRow);
     byId<HTMLInputElement>(`recon-header-${side}`).checked = hasHeader;
 
-    state[side].mapping = autoDetectColumns(desc.firstRow, desc.sampleRow, hasHeader);
+    // Any existing column pick that no longer fits is reset to -1, then
+    // auto-detected so a sensible default appears in the dropdown.
+    for (let k = 0; k < state.fields.length; k++) {
+      const f = state.fields[k];
+      if (side === "a" && f.colA >= desc.columnCount) f.colA = -1;
+      if (side === "b" && f.colB >= desc.columnCount) f.colB = -1;
+    }
+    autoDetectMissingColumns(side);
 
     renderRangeSummary(side);
-    populateColumnDropdowns(side);
+    renderFields();
     setStatus(`Source ${side.toUpperCase()} captured: ${desc.address}`, "success");
   } catch (err) {
     setStatus(err instanceof Error ? err.message : String(err), "error");
@@ -155,28 +226,10 @@ function renderRangeSummary(side: Side): void {
   if (!desc) {
     el.textContent = "No range selected.";
     el.classList.remove("is-set");
-    byId(`recon-map-${side}`).hidden = true;
     return;
   }
   el.textContent = `${desc.address}  ·  ${desc.rowCount} rows × ${desc.columnCount} cols`;
   el.classList.add("is-set");
-  byId(`recon-map-${side}`).hidden = false;
-}
-
-function populateColumnDropdowns(side: Side): void {
-  const desc = state[side].descriptor;
-  const mapping = state[side].mapping;
-  if (!desc || !mapping) return;
-  const labels = buildColumnLabels(desc, mapping.hasHeader);
-  fillSelect(`recon-col-${side}-date`, labels, mapping.dateCol, (v) => {
-    if (state[side].mapping) state[side].mapping!.dateCol = v;
-  });
-  fillSelect(`recon-col-${side}-amount`, labels, mapping.amountCol, (v) => {
-    if (state[side].mapping) state[side].mapping!.amountCol = v;
-  });
-  fillSelect(`recon-col-${side}-desc`, labels, mapping.descCol, (v) => {
-    if (state[side].mapping) state[side].mapping!.descCol = v;
-  });
 }
 
 function buildColumnLabels(desc: RangeDescriptor, hasHeader: boolean): string[] {
@@ -194,85 +247,370 @@ function buildColumnLabels(desc: RangeDescriptor, hasHeader: boolean): string[] 
   return labels;
 }
 
-function columnIndexToLetter(i: number): string {
-  let s = "";
-  let n = i;
-  do {
-    s = String.fromCharCode(65 + (n % 26)) + s;
-    n = Math.floor(n / 26) - 1;
-  } while (n >= 0);
-  return s;
-}
+/* --------------------------- Render fields --------------------------- */
 
-function fillSelect(
-  id: string,
-  options: string[],
-  selected: number,
-  onChange: (v: number) => void
-): void {
-  const sel = byId<HTMLSelectElement>(id);
-  sel.innerHTML = "";
-  for (let i = 0; i < options.length; i++) {
-    const opt = document.createElement("option");
-    opt.value = String(i);
-    opt.textContent = options[i];
-    if (i === selected) opt.selected = true;
-    sel.appendChild(opt);
+function renderFields(): void {
+  const container = byId("recon-fields");
+  container.innerHTML = "";
+  for (let k = 0; k < state.fields.length; k++) {
+    container.appendChild(renderFieldRow(state.fields[k]));
   }
-  // onchange (not addEventListener) so repeated populates don't stack handlers.
-  sel.onchange = () => onChange(parseInt(sel.value, 10));
+  byId("recon-fields-count").textContent = `${state.fields.length} of ${MAX_FIELDS}`;
+  byId<HTMLButtonElement>("recon-add-field").disabled = state.fields.length >= MAX_FIELDS;
+
+  // Show an empty-state hint when there are no fields at all.
+  const empty = byId("recon-fields-empty");
+  if (empty) empty.hidden = state.fields.length > 0;
 }
 
-function recomputeMapping(side: Side): void {
+function renderFieldRow(f: FieldConfig): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "recon-field";
+  row.setAttribute("data-field-id", f.id);
+
+  /* Head: label input + type select + remove button */
+  const head = document.createElement("div");
+  head.className = "recon-field__head";
+
+  const labelInput = document.createElement("input");
+  labelInput.type = "text";
+  labelInput.className = "recon-field__label field__input";
+  labelInput.value = f.label;
+  labelInput.placeholder = "Field name";
+  labelInput.addEventListener("input", () => {
+    f.label = labelInput.value;
+  });
+  head.appendChild(labelInput);
+
+  const typeSelect = document.createElement("select");
+  typeSelect.className = "recon-field__type field__input";
+  const typeOptions: Array<[FieldType, string]> = [
+    ["exact", "Exact"],
+    ["numeric", "Numeric"],
+    ["date", "Date"],
+    ["fuzzy", "Fuzzy text"],
+  ];
+  for (let i = 0; i < typeOptions.length; i++) {
+    const opt = document.createElement("option");
+    opt.value = typeOptions[i][0];
+    opt.textContent = typeOptions[i][1];
+    if (typeOptions[i][0] === f.type) opt.selected = true;
+    typeSelect.appendChild(opt);
+  }
+  typeSelect.addEventListener("change", () => {
+    f.type = typeSelect.value as FieldType;
+    // Replace tolerance with the new type's defaults — keeping old keys would
+    // be misleading.
+    f.tolerance = defaultToleranceForType(f.type);
+    renderFields();
+  });
+  head.appendChild(typeSelect);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "recon-field__remove icon-btn";
+  removeBtn.title = "Remove field";
+  removeBtn.setAttribute("aria-label", "Remove field");
+  removeBtn.textContent = "×";
+  removeBtn.addEventListener("click", () => removeField(f.id));
+  head.appendChild(removeBtn);
+
+  row.appendChild(head);
+
+  /* Body: column pickers + meta + optional advanced panel */
+  const body = document.createElement("div");
+  body.className = "recon-field__body";
+
+  const colsRow = document.createElement("div");
+  colsRow.className = "row row--2 recon-field__cols";
+  colsRow.appendChild(renderColumnPicker(f, "a"));
+  colsRow.appendChild(renderColumnPicker(f, "b"));
+  body.appendChild(colsRow);
+
+  const meta = document.createElement("div");
+  meta.className = "recon-field__meta";
+  meta.appendChild(renderWeightChips(f));
+
+  const reqLabel = document.createElement("label");
+  reqLabel.className = "recon-field__toggle";
+  const reqInput = document.createElement("input");
+  reqInput.type = "checkbox";
+  reqInput.checked = f.required;
+  reqInput.addEventListener("change", () => {
+    f.required = reqInput.checked;
+    // Re-render so the advanced panel's "On failure" block appears/disappears.
+    renderFields();
+  });
+  reqLabel.appendChild(reqInput);
+  reqLabel.appendChild(document.createTextNode(" Required"));
+  meta.appendChild(reqLabel);
+
+  const advToggle = document.createElement("button");
+  advToggle.type = "button";
+  advToggle.className = "recon-field__adv-toggle";
+  const isExpanded = !!state.expanded[f.id];
+  advToggle.textContent = (isExpanded ? "▾" : "▸") + " Advanced";
+  advToggle.addEventListener("click", () => {
+    state.expanded[f.id] = !state.expanded[f.id];
+    renderFields();
+  });
+  meta.appendChild(advToggle);
+
+  body.appendChild(meta);
+
+  if (isExpanded) {
+    body.appendChild(renderAdvancedPanel(f));
+  }
+
+  row.appendChild(body);
+  return row;
+}
+
+function renderColumnPicker(f: FieldConfig, side: Side): HTMLElement {
   const desc = state[side].descriptor;
-  if (!desc) return;
-  const hasHeader = byId<HTMLInputElement>(`recon-header-${side}`).checked;
-  state[side].mapping = autoDetectColumns(desc.firstRow, desc.sampleRow, hasHeader);
-  populateColumnDropdowns(side);
+  const wrap = document.createElement("label");
+  wrap.className = "field";
+
+  const span = document.createElement("span");
+  span.className = "field__label";
+  span.textContent = `Col ${side.toUpperCase()}`;
+  wrap.appendChild(span);
+
+  const select = document.createElement("select");
+  select.className = "field__input";
+
+  if (!desc) {
+    const opt = document.createElement("option");
+    opt.value = "-1";
+    opt.textContent = `— capture Source ${side.toUpperCase()} —`;
+    opt.disabled = true;
+    opt.selected = true;
+    select.appendChild(opt);
+    select.disabled = true;
+  } else {
+    const hasHeader = byId<HTMLInputElement>(`recon-header-${side}`).checked;
+    const labels = buildColumnLabels(desc, hasHeader);
+    const unset = document.createElement("option");
+    unset.value = "-1";
+    unset.textContent = "— unset —";
+    select.appendChild(unset);
+    for (let i = 0; i < labels.length; i++) {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = labels[i];
+      select.appendChild(opt);
+    }
+    const current = side === "a" ? f.colA : f.colB;
+    select.value = String(current >= 0 && current < labels.length ? current : -1);
+    select.addEventListener("change", () => {
+      const v = parseInt(select.value, 10);
+      if (side === "a") f.colA = v;
+      else f.colB = v;
+    });
+  }
+  wrap.appendChild(select);
+  return wrap;
+}
+
+function renderWeightChips(f: FieldConfig): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "recon-field__weight";
+
+  const label = document.createElement("span");
+  label.className = "recon-field__weight-label";
+  label.textContent = "Weight";
+  wrap.appendChild(label);
+
+  const group = document.createElement("div");
+  group.className = "recon-field__weight-chips";
+  const weights: Array<[FieldWeight, string]> = [
+    ["low", "Low"],
+    ["medium", "Med"],
+    ["high", "High"],
+  ];
+  for (let i = 0; i < weights.length; i++) {
+    const [w, l] = weights[i];
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip" + (f.weight === w ? " is-active" : "");
+    btn.textContent = l;
+    btn.addEventListener("click", () => {
+      f.weight = w;
+      renderFields();
+    });
+    group.appendChild(btn);
+  }
+  wrap.appendChild(group);
+  return wrap;
+}
+
+function renderAdvancedPanel(f: FieldConfig): HTMLElement {
+  const panel = document.createElement("div");
+  panel.className = "recon-field__advanced";
+
+  /* Type-specific tolerance inputs */
+  const tolRow = document.createElement("div");
+  tolRow.className = "recon-field__tol-row";
+
+  if (f.type === "numeric") {
+    tolRow.appendChild(
+      renderNumberInput("± Absolute", f.tolerance.amountFixed || 0, 0.01, (v) => {
+        f.tolerance.amountFixed = v;
+      })
+    );
+    tolRow.appendChild(
+      renderNumberInput("± Percent %", f.tolerance.amountPct || 0, 0.1, (v) => {
+        f.tolerance.amountPct = v;
+      })
+    );
+  } else if (f.type === "date") {
+    tolRow.appendChild(
+      renderNumberInput("± Days", f.tolerance.dateDays || 0, 1, (v) => {
+        f.tolerance.dateDays = Math.floor(v);
+      })
+    );
+  } else if (f.type === "fuzzy") {
+    const current = f.tolerance.minSimilarity === undefined ? 0.6 : f.tolerance.minSimilarity;
+    tolRow.appendChild(
+      renderNumberInput("Min similarity (0–1)", current, 0.05, (v) => {
+        f.tolerance.minSimilarity = Math.max(0, Math.min(1, v));
+      })
+    );
+  } else {
+    const toggle = document.createElement("label");
+    toggle.className = "recon-field__toggle";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!f.tolerance.caseSensitive;
+    cb.addEventListener("change", () => {
+      f.tolerance.caseSensitive = cb.checked;
+    });
+    toggle.appendChild(cb);
+    toggle.appendChild(document.createTextNode(" Case-sensitive"));
+    tolRow.appendChild(toggle);
+  }
+  panel.appendChild(tolRow);
+
+  /* Required-failure behavior radios — only shown when Required is on. */
+  if (f.required) {
+    const failWrap = document.createElement("fieldset");
+    failWrap.className = "recon-field__fail";
+    const legend = document.createElement("legend");
+    legend.textContent = "If this field fails";
+    failWrap.appendChild(legend);
+
+    const name = `fail-${f.id}`;
+    failWrap.appendChild(
+      renderRadio(name, "Block match entirely (hard gate)", !f.downgradeOnFail, () => {
+        f.downgradeOnFail = false;
+      })
+    );
+    failWrap.appendChild(
+      renderRadio(name, "Downgrade to Possible Match", f.downgradeOnFail, () => {
+        f.downgradeOnFail = true;
+      })
+    );
+    panel.appendChild(failWrap);
+  }
+
+  return panel;
+}
+
+function renderNumberInput(
+  label: string,
+  value: number,
+  step: number,
+  onChange: (v: number) => void
+): HTMLElement {
+  const wrap = document.createElement("label");
+  wrap.className = "field";
+  const span = document.createElement("span");
+  span.className = "field__label";
+  span.textContent = label;
+  wrap.appendChild(span);
+  const input = document.createElement("input");
+  input.type = "number";
+  input.className = "field__input";
+  input.min = "0";
+  input.step = String(step);
+  input.value = String(value);
+  input.addEventListener("input", () => {
+    const n = parseFloat(input.value);
+    if (isFinite(n) && n >= 0) onChange(n);
+  });
+  wrap.appendChild(input);
+  return wrap;
+}
+
+function renderRadio(
+  name: string,
+  label: string,
+  checked: boolean,
+  onChange: () => void
+): HTMLElement {
+  const wrap = document.createElement("label");
+  wrap.className = "recon-field__radio";
+  const radio = document.createElement("input");
+  radio.type = "radio";
+  radio.name = name;
+  radio.checked = checked;
+  radio.addEventListener("change", () => {
+    if (radio.checked) onChange();
+  });
+  wrap.appendChild(radio);
+  wrap.appendChild(document.createTextNode(" " + label));
+  return wrap;
 }
 
 /* -------------------------- Run reconciliation -------------------------- */
 
 async function runReconciliation(): Promise<void> {
-  const a = state.a;
-  const b = state.b;
-  if (!a.descriptor || !a.mapping) {
+  if (!state.a.descriptor) {
     setStatus("Capture a range for Source A first.", "error");
     return;
   }
-  if (!b.descriptor || !b.mapping) {
+  if (!state.b.descriptor) {
     setStatus("Capture a range for Source B first.", "error");
     return;
   }
+  if (!state.fields.length) {
+    setStatus("Add at least one matching field.", "error");
+    return;
+  }
 
-  const { mode, tol } = readFormTolerances();
-  // For "custom" mode we use the Normal thresholds so users still get the
-  // three-tier Matched / Possible / Unmatched output without configuring it.
-  const thresholds = mode === "custom" ? DEFAULT_THRESHOLDS.normal : DEFAULT_THRESHOLDS[mode];
+  const incomplete = state.fields.filter((f) => f.colA < 0 || f.colB < 0);
+  if (incomplete.length) {
+    const names = incomplete.map((f) => f.label || "(unnamed)").join(", ");
+    setStatus(`These fields still need a column on both sides: ${names}.`, "error");
+    return;
+  }
 
   const runBtn = byId<HTMLButtonElement>("recon-run-btn");
   runBtn.disabled = true;
   setStatus("Reconciling…", "loading");
   try {
+    const hasHeaderA = byId<HTMLInputElement>("recon-header-a").checked;
+    const hasHeaderB = byId<HTMLInputElement>("recon-header-b").checked;
     const [valuesA, valuesB] = await Promise.all([
-      readRangeValues(a.descriptor),
-      readRangeValues(b.descriptor),
+      readRangeValues(state.a.descriptor),
+      readRangeValues(state.b.descriptor),
     ]);
-    const rowsA = normalizeRows(valuesA, a.mapping, parseFirstExcelRow(a.descriptor.a1));
-    const rowsB = normalizeRows(valuesB, b.mapping, parseFirstExcelRow(b.descriptor.a1));
+    const rowsA = buildRawRows(valuesA, hasHeaderA, parseFirstExcelRow(state.a.descriptor.a1));
+    const rowsB = buildRawRows(valuesB, hasHeaderB, parseFirstExcelRow(state.b.descriptor.a1));
 
     if (!rowsA.length || !rowsB.length) {
       throw new Error(
-        "One of the ranges has no data rows after normalization. Check your column mapping and the 'First row is a header' toggle."
+        "One of the ranges has no data rows after normalization. Check the 'First row is a header' toggle."
       );
     }
 
-    const result = reconcile(rowsA, rowsB, tol, thresholds);
+    const thresholds = SENSITIVITY_THRESHOLDS[state.sensitivity];
+    const result = reconcile(rowsA, rowsB, state.fields, thresholds);
     const sheetName = await writeReconciliationSheet(result, {
-      mode,
-      tolerances: tol,
-      descA: a.descriptor,
-      descB: b.descriptor,
+      sensitivity: state.sensitivity,
+      fields: state.fields,
+      descA: state.a.descriptor,
+      descB: state.b.descriptor,
     });
 
     renderSummaryCard(result);
@@ -324,13 +662,10 @@ function renderSummaryCard(result: ReconciliationResult): void {
 /* ------------------------------ Defaults ------------------------------ */
 
 async function saveDefaults(): Promise<void> {
-  const { mode, tol } = readFormTolerances();
   try {
     await saveReconSettings({
-      mode,
-      amountFixed: tol.amountFixed,
-      amountPct: tol.amountPct,
-      dateDays: tol.dateDays,
+      sensitivity: state.sensitivity,
+      fields: state.fields.map(configToPersisted),
     });
     setStatus("Reconciliation defaults saved for this workbook.", "success");
   } catch (err) {
