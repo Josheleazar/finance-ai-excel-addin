@@ -25,11 +25,22 @@
  *   calls `window.history.replaceState`, which the Office Dialog webview can
  *   throw on. Hash routing uses URL fragments and never touches history, so
  *   it's the right fit for embedded dialog contexts.
+ *
+ * Why the /no-rhc subpath:
+ *   The default `@clerk/clerk-js` build uses Remotely-Hosted Components (RHC):
+ *   the UI bundles are fetched from Clerk's CDN at runtime. That fetch is not
+ *   reliably reachable inside the Office Dialog webview, and when it fails
+ *   the internal components promise never resolves, surfacing as the
+ *   misleading `Error("Clerk was not loaded with Ui components")` thrown by
+ *   `assertComponentsReady`. The `/no-rhc` subpath ships every UI component
+ *   inlined in the bundle (~790 KB) so no runtime fetch is needed — the right
+ *   choice for any sandboxed webview (Office add-ins, Electron contextBridge,
+ *   strict-CSP pages, etc.).
  */
 
 /* global Office, document, console, process, HTMLDivElement, window */
 
-import { Clerk } from "@clerk/clerk-js";
+import { Clerk } from "@clerk/clerk-js/no-rhc";
 
 declare const process: { env: { CLERK_PUBLISHABLE_KEY?: string } };
 
