@@ -29,6 +29,38 @@ declare const process: { env: { CLERK_PUBLISHABLE_KEY?: string } };
 const PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY || "";
 const JWT_TEMPLATE = "office-addin";
 
+/**
+ * Some Office Dialog hosts (notably the Trident/Edge-Legacy webview used by
+ * Excel desktop on older Windows builds) do not expose `history.pushState` /
+ * `history.replaceState`. Clerk calls these during its sign-in flow and
+ * throws `globalThis.history.replaceState is not a function`. We install
+ * harmless no-ops *before* importing/instantiating Clerk so the call sites
+ * succeed. The sign-in component is mounted with `routing: "virtual"` below,
+ * so we don't actually need URL changes anyway.
+ */
+function patchHistoryApi(): void {
+  try {
+    if (typeof window === "undefined" || !window.history) return;
+    const h = window.history as History & {
+      pushState?: typeof History.prototype.pushState;
+      replaceState?: typeof History.prototype.replaceState;
+    };
+    if (typeof h.pushState !== "function") {
+      h.pushState = function () {
+        /* no-op: Office Dialog host lacks history API */
+      } as typeof History.prototype.pushState;
+    }
+    if (typeof h.replaceState !== "function") {
+      h.replaceState = function () {
+        /* no-op: Office Dialog host lacks history API */
+      } as typeof History.prototype.replaceState;
+    }
+  } catch {
+    /* ignore — patching is best-effort */
+  }
+}
+patchHistoryApi();
+
 interface AuthSuccess {
   ok: true;
   token: string;
@@ -170,14 +202,19 @@ async function main(): Promise<void> {
   mount.innerHTML = ""; // clear any fallback content
 
   try {
-    // After sign-in, Clerk redirects to `forceRedirectUrl`. Pointing it at
-    // this same dialog URL means the page reloads and main() re-runs,
-    // hitting the "already signed in" branch which mints a JWT and posts
-    // it to the parent task pane.
+    // `routing: "virtual"` keeps Clerk's flow entirely in-memory and avoids
+    // any calls into `window.history.{push,replace}State`, which the Office
+    // Dialog webview may not implement. The addListener() callback below
+    // detects sign-in completion and mints the JWT — we don't need a
+    // redirect URL at all in virtual mode.
+    //
+    // Note: @clerk/clerk-js's vanilla SignInProps types currently advertise
+    // only "path" | "hash", but the runtime accepts "virtual" (it's the same
+    // mode the React SDK exposes for embedded contexts). Cast through unknown
+    // to satisfy the stale type while keeping the rest of the props checked.
     clerk.mountSignIn(mount, {
-      forceRedirectUrl: window.location.href,
-      fallbackRedirectUrl: window.location.href,
-    });
+      routing: "virtual",
+    } as unknown as Parameters<Clerk["mountSignIn"]>[1]);
   } catch (err) {
     reportError(err instanceof Error ? err.message : "Failed to render Clerk sign-in.");
     return;
