@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Finalysis — Sign in</title>
+
+    <!-- Office JavaScript API -->
+    <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+
+    <style>
+        :root {
+            --fa-bg: #ffffff;
+            --fa-surface: #faf9f8;
+            --fa-border: #e1dfdd;
+            --fa-text: #201f1e;
+            --fa-text-muted: #605e5c;
+            --fa-primary: #0f6cbd;
+            --fa-error: #a4262c;
+            --fa-radius: 4px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            min-height: 100vh;
+            font-family: "Segoe UI", "SF Pro Text", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            font-size: 13px;
+            color: var(--fa-text);
+            background: var(--fa-surface);
+        }
+
+        .auth-shell {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 24px 16px 32px;
+        }
+
+        .auth-brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            margin-bottom: 18px;
+        }
+
+        .auth-brand__logo {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            background: var(--fa-primary);
+            color: #fff;
+            border-radius: var(--fa-radius);
+            font-size: 16px;
+            line-height: 1;
+        }
+
+        .auth-status {
+            min-height: 18px;
+            font-size: 12px;
+            color: var(--fa-text-muted);
+            margin-bottom: 8px;
+            text-align: center;
+        }
+
+        .auth-status[data-kind="error"] {
+            color: var(--fa-error);
+        }
+
+        #clerk-mount {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+        }
+
+        .auth-fallback {
+            max-width: 360px;
+            padding: 16px;
+            border: 1px solid var(--fa-border);
+            border-radius: var(--fa-radius);
+            background: var(--fa-bg);
+        }
+
+        .auth-fallback h2 {
+            margin: 0 0 8px;
+            font-size: 14px;
+        }
+
+        .auth-fallback p {
+            margin: 0 0 8px;
+            color: var(--fa-text-muted);
+            line-height: 1.5;
+        }
+
+        code {
+            font-family: Consolas, Menlo, "Courier New", monospace;
+            font-size: 11px;
+            background: var(--fa-surface);
+            padding: 1px 4px;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="auth-shell">
+        <div class="auth-brand">
+            <span class="auth-brand__logo" aria-hidden="true">▤</span>
+            <span>Finalysis</span>
+        </div>
+        <p id="auth-status" class="auth-status" data-kind="info">Loading sign-in…</p>
+        <div id="clerk-mount" aria-live="polite"></div>
+    </div>
+</body>
+
+</html>

@@ -8,9 +8,12 @@
     "noEmitOnError": true,
     "outDir": "lib",
     "sourceMap": true,
-    "target": "es5",
+    "target": "es2017",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
     "lib": [
-      "es2015",
+      "es2017",
       "dom"
     ]
   },

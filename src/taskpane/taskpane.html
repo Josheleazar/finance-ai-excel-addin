@@ -20,10 +20,28 @@
                 <span class="app__logo" aria-hidden="true">▤</span>
                 <span class="app__title">Finalysis</span>
             </div>
-            <button id="settings-toggle" class="icon-btn" type="button" title="Settings" aria-label="Settings">
-                ⚙
-            </button>
+            <div class="app__header-actions">
+                <span id="auth-user" class="app__user" hidden></span>
+                <button id="auth-signout" class="icon-btn" type="button" title="Sign out" aria-label="Sign out" hidden>
+                    ⎋
+                </button>
+                <button id="settings-toggle" class="icon-btn" type="button" title="Settings" aria-label="Settings">
+                    ⚙
+                </button>
+            </div>
         </header>
+
+        <section id="auth-gate" class="auth-gate" hidden>
+            <div class="auth-gate__card">
+                <h2 class="auth-gate__title">Sign in to Finalysis</h2>
+                <p class="auth-gate__body">
+                    Authentication keeps your portfolio and reconciliation history attached to your account.
+                    Your Finnhub API key stays in this workbook and is never sent to Finalysis.
+                </p>
+                <button id="auth-signin-btn" class="btn btn--primary" type="button">Sign in</button>
+                <p id="auth-error" class="auth-gate__error" hidden></p>
+            </div>
+        </section>
 
         <section id="settings-panel" class="settings-panel" hidden>
             <h2 class="settings-panel__title">Settings</h2>
@@ -43,14 +61,14 @@
             </p>
         </section>
 
-        <nav class="tabs" role="tablist">
+        <nav id="main-tabs" class="tabs" role="tablist" hidden>
             <button class="tabs__btn is-active" role="tab" data-tab="dashboard">Dashboard</button>
             <button class="tabs__btn" role="tab" data-tab="data-import">Data</button>
             <button class="tabs__btn" role="tab" data-tab="reconciliation">Reconcile</button>
             <button class="tabs__btn" role="tab" data-tab="portfolio">Portfolio</button>
         </nav>
 
-        <main class="tab-panels">
+        <main class="tab-panels" hidden>
             <!-- Dashboard -->
             <section id="tab-dashboard" class="tab-panel is-active" role="tabpanel">
                 <h2 class="panel__title">Quick lookup</h2>
