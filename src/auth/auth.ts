@@ -6,54 +6,43 @@
  * browser window (not an iframe), Clerk's cookies set here are first-party
  * and the sign-in flow works on Excel for the web, Mac, and Windows.
  *
- * Why we load Clerk from the CDN instead of bundling it:
- *   The npm package `@clerk/clerk-js` v6 ships a lightweight loader
- *   (`clerk.js` / `clerk.mjs`) that lazy-imports its UI component chunks at
- *   runtime via webpack-style dynamic imports. Inside the Office Dialog
- *   webview those chunk URLs don't resolve, so calling `mountSignIn()`
- *   throws "Clerk was not loaded with UI components". Loading the all-in-one
- *   `clerk.browser.js` build from Clerk's own CDN sidesteps the chunk
- *   problem entirely — it's the officially-supported pattern for vanilla JS.
- *
- *   We still depend on `@clerk/clerk-js` so we get accurate TypeScript types
- *   (`import type` is erased at compile time and adds nothing to the bundle).
- *
  * Flow:
  *   1. Office.onReady — confirm the dialog API is available.
- *   2. Inject Clerk's CDN script using the FAPI host decoded from the
- *      publishable key. The `clerk.browser.js` bundle auto-instantiates
- *      `window.Clerk` (using the `data-clerk-publishable-key` attribute on
- *      the script tag) — we then `await window.Clerk.load()` to initialize.
+ *   2. `new Clerk(publishableKey)` + `await clerk.load()`.
  *   3. If the user is already signed in (cookie survived), mint a JWT and
  *      messageParent immediately.
- *   4. Otherwise mountSignIn() and listen for sign-in completion.
+ *   4. Otherwise mountSignIn() with `routing: "hash"` (URL fragments only;
+ *      no history API calls) and listen for sign-in completion.
  *   5. On success, mint a JWT via session.getToken({ template: 'office-addin' })
  *      and messageParent({ ok: true, token, ... }).
  *   6. On any failure, messageParent({ ok: false, error }).
  *
  * The task-pane side parses the JSON message in services/auth.ts.
+ *
+ * Why hash routing:
+ *   The vanilla `@clerk/clerk-js` SDK only supports `routing: "path" | "hash"`
+ *   (the `"virtual"` mode exists only in `@clerk/clerk-react`). Path routing
+ *   calls `window.history.replaceState`, which the Office Dialog webview can
+ *   throw on. Hash routing uses URL fragments and never touches history, so
+ *   it's the right fit for embedded dialog contexts.
  */
 
-/* global Office, document, console, process, HTMLDivElement, window, atob */
+/* global Office, document, console, process, HTMLDivElement, window */
 
-import type { Clerk } from "@clerk/clerk-js";
+import { Clerk } from "@clerk/clerk-js";
 
 declare const process: { env: { CLERK_PUBLISHABLE_KEY?: string } };
 
 const PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY || "";
 const JWT_TEMPLATE = "office-addin";
-// Major-version pin matches package.json. Clerk's CDN serves
-// `/npm/@clerk/clerk-js@<major>/dist/clerk.browser.js`.
-const CLERK_JS_MAJOR_VERSION = "6";
 
 /**
  * Some Office Dialog hosts (notably the Trident/Edge-Legacy webview used by
  * Excel desktop on older Windows builds) do not expose `history.pushState` /
- * `history.replaceState`. Clerk calls these during its sign-in flow and
- * throws `globalThis.history.replaceState is not a function`. We install
- * harmless no-ops *before* loading Clerk so the call sites succeed. The
- * sign-in component is mounted with `routing: "virtual"` below, so we don't
- * actually need URL changes anyway.
+ * `history.replaceState`. We use `routing: "hash"` below so Clerk should
+ * never call those, but installing harmless no-ops as a defensive polyfill
+ * costs nothing and protects against any other code path that might touch
+ * the history API.
  */
 function patchHistoryApi(): void {
   try {
@@ -133,90 +122,6 @@ function reportError(error: string): void {
 }
 
 /**
- * Decode the Clerk Frontend API host from a publishable key.
- *
- * Publishable keys have the format `pk_(test|live)_<base64(fapi + "$")>`.
- * For example, `pk_test_Y2xlcmsuZXhhbXBsZS5jb20k` decodes to
- * `clerk.example.com$`, so the FAPI host is `clerk.example.com`.
- */
-function fapiFromPublishableKey(key: string): string {
-  const match = /^pk_(test|live)_(.+)$/.exec(key);
-  if (!match) {
-    throw new Error("CLERK_PUBLISHABLE_KEY is not in the expected pk_(test|live)_… format.");
-  }
-  let decoded: string;
-  try {
-    decoded = atob(match[2]);
-  } catch {
-    throw new Error("CLERK_PUBLISHABLE_KEY is not a valid base64-encoded publishable key.");
-  }
-  const fapi = decoded.endsWith("$") ? decoded.slice(0, -1) : decoded;
-  if (!fapi) {
-    throw new Error("CLERK_PUBLISHABLE_KEY does not contain a Frontend API host.");
-  }
-  return fapi;
-}
-
-/**
- * Inject Clerk's CDN script tag and resolve with a ready-to-load `Clerk`
- * instance. The `clerk.browser.js` bundle reads its publishable key from the
- * `data-clerk-publishable-key` attribute on the script element and ends with
- *
- *   window.Clerk || (window.Clerk = new Clerk(publishableKey, {...}))
- *
- * so by the time the script's `onload` fires, `window.Clerk` is already an
- * instance. We just validate the shape (must have a `.load()` method) and
- * return it.
- *
- * Loading is idempotent — if `window.Clerk` already exists from a previous
- * call we reuse it instead of re-injecting the script.
- */
-async function loadClerkFromCdn(publishableKey: string): Promise<Clerk> {
-  const readWindowClerk = (): Clerk | undefined => {
-    const candidate = (window as unknown as { Clerk?: unknown }).Clerk;
-    // A loaded Clerk instance is an object with a `.load` method.
-    if (
-      candidate &&
-      typeof candidate === "object" &&
-      typeof (candidate as { load?: unknown }).load === "function"
-    ) {
-      return candidate as Clerk;
-    }
-    return undefined;
-  };
-
-  // Already loaded? (e.g. dialog reload after partial flow.)
-  const existing = readWindowClerk();
-  if (existing) return existing;
-
-  const fapi = fapiFromPublishableKey(publishableKey);
-  const scriptUrl = `https://${fapi}/npm/@clerk/clerk-js@${CLERK_JS_MAJOR_VERSION}/dist/clerk.browser.js`;
-
-  await new Promise<void>((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = scriptUrl;
-    script.async = true;
-    script.crossOrigin = "anonymous";
-    // The bundle reads this attribute to auto-instantiate `window.Clerk`
-    // with the correct publishable key.
-    script.setAttribute("data-clerk-publishable-key", publishableKey);
-    script.onload = () => resolve();
-    script.onerror = () =>
-      reject(new Error(`Failed to load Clerk from ${scriptUrl}. Check network and AppDomains.`));
-    document.head.appendChild(script);
-  });
-
-  const instance = readWindowClerk();
-  if (!instance) {
-    throw new Error(
-      "Clerk script loaded but window.Clerk is not a usable instance. " +
-        "This usually means the publishable key on the script tag was not picked up."
-    );
-  }
-  return instance;
-}
-
-/**
  * Pull a fresh JWT for the current Clerk session and ship it to the parent.
  * Returns true if a token was successfully posted.
  */
@@ -277,16 +182,10 @@ async function main(): Promise<void> {
 
   let clerk: Clerk;
   try {
-    clerk = await loadClerkFromCdn(PUBLISHABLE_KEY);
-  } catch (err) {
-    reportError(err instanceof Error ? err.message : "Failed to load Clerk.");
-    return;
-  }
-
-  try {
-    // The bundle auto-instantiates Clerk with the publishable key from the
-    // script-tag attribute, but we still have to call `.load()` to fetch the
-    // session/environment from the Frontend API.
+    clerk = new Clerk(PUBLISHABLE_KEY);
+    // The Clerk Frontend API URL is embedded in the publishable key, so
+    // load() needs no arguments for either dev (pk_test_...) or prod
+    // (pk_live_...) instances.
     await clerk.load();
   } catch (err) {
     reportError(err instanceof Error ? err.message : "Failed to initialize Clerk.");
@@ -309,19 +208,14 @@ async function main(): Promise<void> {
   mount.innerHTML = ""; // clear any fallback content
 
   try {
-    // `routing: "virtual"` keeps Clerk's flow entirely in-memory and avoids
+    // `routing: "hash"` keeps Clerk's flow on URL fragments (#) and avoids
     // any calls into `window.history.{push,replace}State`, which the Office
-    // Dialog webview may not implement. The addListener() callback below
-    // detects sign-in completion and mints the JWT — we don't need a
-    // redirect URL at all in virtual mode.
-    //
-    // Note: @clerk/clerk-js's vanilla SignInProps types currently advertise
-    // only "path" | "hash", but the runtime accepts "virtual" (it's the same
-    // mode the React SDK exposes for embedded contexts). Cast through unknown
-    // to satisfy the stale type while keeping the rest of the props checked.
+    // Dialog webview may not implement. The dialog stays on one logical URL
+    // throughout, so hash mutations are inert. The addListener() callback
+    // below detects sign-in completion and mints the JWT.
     clerk.mountSignIn(mount, {
-      routing: "virtual",
-    } as unknown as Parameters<Clerk["mountSignIn"]>[1]);
+      routing: "hash",
+    });
   } catch (err) {
     reportError(err instanceof Error ? err.message : "Failed to render Clerk sign-in.");
     return;
