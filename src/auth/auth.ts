@@ -6,10 +6,22 @@
  * browser window (not an iframe), Clerk's cookies set here are first-party
  * and the sign-in flow works on Excel for the web, Mac, and Windows.
  *
+ * Why we load Clerk from the CDN instead of bundling it:
+ *   The npm package `@clerk/clerk-js` v6 ships a lightweight loader
+ *   (`clerk.js` / `clerk.mjs`) that lazy-imports its UI component chunks at
+ *   runtime via webpack-style dynamic imports. Inside the Office Dialog
+ *   webview those chunk URLs don't resolve, so calling `mountSignIn()`
+ *   throws "Clerk was not loaded with UI components". Loading the all-in-one
+ *   `clerk.browser.js` build from Clerk's own CDN sidesteps the chunk
+ *   problem entirely — it's the officially-supported pattern for vanilla JS.
+ *
+ *   We still depend on `@clerk/clerk-js` so we get accurate TypeScript types
+ *   (`import type` is erased at compile time and adds nothing to the bundle).
+ *
  * Flow:
  *   1. Office.onReady — confirm the dialog API is available.
- *   2. Initialize @clerk/clerk-js with the publishable key (DefinePlugin'd at
- *      build time).
+ *   2. Inject Clerk's CDN script using the FAPI host decoded from the
+ *      publishable key, then `new window.Clerk(key)` and `await load()`.
  *   3. If the user is already signed in (cookie survived), mint a JWT and
  *      messageParent immediately.
  *   4. Otherwise mountSignIn() and listen for sign-in completion.
@@ -20,23 +32,38 @@
  * The task-pane side parses the JSON message in services/auth.ts.
  */
 
-/* global Office, document, console, process, HTMLDivElement, window */
+/* global Office, document, console, process, HTMLDivElement, window, atob */
 
-import { Clerk } from "@clerk/clerk-js";
+import type { Clerk } from "@clerk/clerk-js";
 
 declare const process: { env: { CLERK_PUBLISHABLE_KEY?: string } };
 
 const PUBLISHABLE_KEY = process.env.CLERK_PUBLISHABLE_KEY || "";
 const JWT_TEMPLATE = "office-addin";
+// Major-version pin matches package.json. Clerk's CDN serves
+// `/npm/@clerk/clerk-js@<major>/dist/clerk.browser.js`.
+const CLERK_JS_MAJOR_VERSION = "6";
+
+/**
+ * The CDN-loaded `clerk.browser.js` exposes the Clerk *class* as
+ * `window.Clerk` when the script tag has no `data-clerk-publishable-key`
+ * attribute (which is our case — we instantiate manually). The
+ * `@clerk/clerk-js` package's own `d.ts` already augments `Window` with
+ * `Clerk?: Clerk` (the *instance* type) for the data-attribute auto-init
+ * pattern, so we don't redeclare the augmentation here. Instead we read
+ * `window.Clerk` through an `unknown` cast and validate it's a function
+ * before using it as a constructor.
+ */
+type ClerkConstructor = new (publishableKey: string) => Clerk;
 
 /**
  * Some Office Dialog hosts (notably the Trident/Edge-Legacy webview used by
  * Excel desktop on older Windows builds) do not expose `history.pushState` /
  * `history.replaceState`. Clerk calls these during its sign-in flow and
  * throws `globalThis.history.replaceState is not a function`. We install
- * harmless no-ops *before* importing/instantiating Clerk so the call sites
- * succeed. The sign-in component is mounted with `routing: "virtual"` below,
- * so we don't actually need URL changes anyway.
+ * harmless no-ops *before* loading Clerk so the call sites succeed. The
+ * sign-in component is mounted with `routing: "virtual"` below, so we don't
+ * actually need URL changes anyway.
  */
 function patchHistoryApi(): void {
   try {
@@ -116,6 +143,64 @@ function reportError(error: string): void {
 }
 
 /**
+ * Decode the Clerk Frontend API host from a publishable key.
+ *
+ * Publishable keys have the format `pk_(test|live)_<base64(fapi + "$")>`.
+ * For example, `pk_test_Y2xlcmsuZXhhbXBsZS5jb20k` decodes to
+ * `clerk.example.com$`, so the FAPI host is `clerk.example.com`.
+ */
+function fapiFromPublishableKey(key: string): string {
+  const match = /^pk_(test|live)_(.+)$/.exec(key);
+  if (!match) {
+    throw new Error("CLERK_PUBLISHABLE_KEY is not in the expected pk_(test|live)_… format.");
+  }
+  let decoded: string;
+  try {
+    decoded = atob(match[2]);
+  } catch {
+    throw new Error("CLERK_PUBLISHABLE_KEY is not a valid base64-encoded publishable key.");
+  }
+  const fapi = decoded.endsWith("$") ? decoded.slice(0, -1) : decoded;
+  if (!fapi) {
+    throw new Error("CLERK_PUBLISHABLE_KEY does not contain a Frontend API host.");
+  }
+  return fapi;
+}
+
+/**
+ * Inject Clerk's CDN script tag and resolve with the `Clerk` class once it's
+ * available on `window`. Loading is idempotent — repeat calls reuse the
+ * already-loaded constructor.
+ */
+async function loadClerkFromCdn(publishableKey: string): Promise<ClerkConstructor> {
+  // Already loaded? (e.g. dialog reload after partial flow.)
+  const existing = (window as unknown as { Clerk?: unknown }).Clerk;
+  if (typeof existing === "function") {
+    return existing as ClerkConstructor;
+  }
+
+  const fapi = fapiFromPublishableKey(publishableKey);
+  const scriptUrl = `https://${fapi}/npm/@clerk/clerk-js@${CLERK_JS_MAJOR_VERSION}/dist/clerk.browser.js`;
+
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = scriptUrl;
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    script.onload = () => resolve();
+    script.onerror = () =>
+      reject(new Error(`Failed to load Clerk from ${scriptUrl}. Check network and AppDomains.`));
+    document.head.appendChild(script);
+  });
+
+  const ctor = (window as unknown as { Clerk?: unknown }).Clerk;
+  if (typeof ctor !== "function") {
+    throw new Error("Clerk script loaded but window.Clerk is not a constructor.");
+  }
+  return ctor as ClerkConstructor;
+}
+
+/**
  * Pull a fresh JWT for the current Clerk session and ship it to the parent.
  * Returns true if a token was successfully posted.
  */
@@ -174,9 +259,17 @@ async function main(): Promise<void> {
 
   setStatus("Loading Clerk…");
 
+  let ClerkCtor: ClerkConstructor;
+  try {
+    ClerkCtor = await loadClerkFromCdn(PUBLISHABLE_KEY);
+  } catch (err) {
+    reportError(err instanceof Error ? err.message : "Failed to load Clerk.");
+    return;
+  }
+
   let clerk: Clerk;
   try {
-    clerk = new Clerk(PUBLISHABLE_KEY);
+    clerk = new ClerkCtor(PUBLISHABLE_KEY);
     // The Clerk Frontend API URL is embedded in the publishable key, so
     // load() needs no arguments for either dev (pk_test_...) or prod
     // (pk_live_...) instances.
