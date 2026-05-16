@@ -21,7 +21,9 @@
  * Flow:
  *   1. Office.onReady — confirm the dialog API is available.
  *   2. Inject Clerk's CDN script using the FAPI host decoded from the
- *      publishable key, then `new window.Clerk(key)` and `await load()`.
+ *      publishable key. The `clerk.browser.js` bundle auto-instantiates
+ *      `window.Clerk` (using the `data-clerk-publishable-key` attribute on
+ *      the script tag) — we then `await window.Clerk.load()` to initialize.
  *   3. If the user is already signed in (cookie survived), mint a JWT and
  *      messageParent immediately.
  *   4. Otherwise mountSignIn() and listen for sign-in completion.
@@ -43,18 +45,6 @@ const JWT_TEMPLATE = "office-addin";
 // Major-version pin matches package.json. Clerk's CDN serves
 // `/npm/@clerk/clerk-js@<major>/dist/clerk.browser.js`.
 const CLERK_JS_MAJOR_VERSION = "6";
-
-/**
- * The CDN-loaded `clerk.browser.js` exposes the Clerk *class* as
- * `window.Clerk` when the script tag has no `data-clerk-publishable-key`
- * attribute (which is our case — we instantiate manually). The
- * `@clerk/clerk-js` package's own `d.ts` already augments `Window` with
- * `Clerk?: Clerk` (the *instance* type) for the data-attribute auto-init
- * pattern, so we don't redeclare the augmentation here. Instead we read
- * `window.Clerk` through an `unknown` cast and validate it's a function
- * before using it as a constructor.
- */
-type ClerkConstructor = new (publishableKey: string) => Clerk;
 
 /**
  * Some Office Dialog hosts (notably the Trident/Edge-Legacy webview used by
@@ -168,16 +158,36 @@ function fapiFromPublishableKey(key: string): string {
 }
 
 /**
- * Inject Clerk's CDN script tag and resolve with the `Clerk` class once it's
- * available on `window`. Loading is idempotent — repeat calls reuse the
- * already-loaded constructor.
+ * Inject Clerk's CDN script tag and resolve with a ready-to-load `Clerk`
+ * instance. The `clerk.browser.js` bundle reads its publishable key from the
+ * `data-clerk-publishable-key` attribute on the script element and ends with
+ *
+ *   window.Clerk || (window.Clerk = new Clerk(publishableKey, {...}))
+ *
+ * so by the time the script's `onload` fires, `window.Clerk` is already an
+ * instance. We just validate the shape (must have a `.load()` method) and
+ * return it.
+ *
+ * Loading is idempotent — if `window.Clerk` already exists from a previous
+ * call we reuse it instead of re-injecting the script.
  */
-async function loadClerkFromCdn(publishableKey: string): Promise<ClerkConstructor> {
+async function loadClerkFromCdn(publishableKey: string): Promise<Clerk> {
+  const readWindowClerk = (): Clerk | undefined => {
+    const candidate = (window as unknown as { Clerk?: unknown }).Clerk;
+    // A loaded Clerk instance is an object with a `.load` method.
+    if (
+      candidate &&
+      typeof candidate === "object" &&
+      typeof (candidate as { load?: unknown }).load === "function"
+    ) {
+      return candidate as Clerk;
+    }
+    return undefined;
+  };
+
   // Already loaded? (e.g. dialog reload after partial flow.)
-  const existing = (window as unknown as { Clerk?: unknown }).Clerk;
-  if (typeof existing === "function") {
-    return existing as ClerkConstructor;
-  }
+  const existing = readWindowClerk();
+  if (existing) return existing;
 
   const fapi = fapiFromPublishableKey(publishableKey);
   const scriptUrl = `https://${fapi}/npm/@clerk/clerk-js@${CLERK_JS_MAJOR_VERSION}/dist/clerk.browser.js`;
@@ -187,17 +197,23 @@ async function loadClerkFromCdn(publishableKey: string): Promise<ClerkConstructo
     script.src = scriptUrl;
     script.async = true;
     script.crossOrigin = "anonymous";
+    // The bundle reads this attribute to auto-instantiate `window.Clerk`
+    // with the correct publishable key.
+    script.setAttribute("data-clerk-publishable-key", publishableKey);
     script.onload = () => resolve();
     script.onerror = () =>
       reject(new Error(`Failed to load Clerk from ${scriptUrl}. Check network and AppDomains.`));
     document.head.appendChild(script);
   });
 
-  const ctor = (window as unknown as { Clerk?: unknown }).Clerk;
-  if (typeof ctor !== "function") {
-    throw new Error("Clerk script loaded but window.Clerk is not a constructor.");
+  const instance = readWindowClerk();
+  if (!instance) {
+    throw new Error(
+      "Clerk script loaded but window.Clerk is not a usable instance. " +
+        "This usually means the publishable key on the script tag was not picked up."
+    );
   }
-  return ctor as ClerkConstructor;
+  return instance;
 }
 
 /**
@@ -259,20 +275,18 @@ async function main(): Promise<void> {
 
   setStatus("Loading Clerk…");
 
-  let ClerkCtor: ClerkConstructor;
+  let clerk: Clerk;
   try {
-    ClerkCtor = await loadClerkFromCdn(PUBLISHABLE_KEY);
+    clerk = await loadClerkFromCdn(PUBLISHABLE_KEY);
   } catch (err) {
     reportError(err instanceof Error ? err.message : "Failed to load Clerk.");
     return;
   }
 
-  let clerk: Clerk;
   try {
-    clerk = new ClerkCtor(PUBLISHABLE_KEY);
-    // The Clerk Frontend API URL is embedded in the publishable key, so
-    // load() needs no arguments for either dev (pk_test_...) or prod
-    // (pk_live_...) instances.
+    // The bundle auto-instantiates Clerk with the publishable key from the
+    // script-tag attribute, but we still have to call `.load()` to fetch the
+    // session/environment from the Frontend API.
     await clerk.load();
   } catch (err) {
     reportError(err instanceof Error ? err.message : "Failed to initialize Clerk.");
