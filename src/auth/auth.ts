@@ -40,7 +40,7 @@
 
 /* global Office, document, console, process, HTMLDivElement, window */
 
-import { Clerk } from "@clerk/clerk-js/no-rhc";
+import Clerk from "@clerk/clerk-js/no-rhc";
 
 declare const process: { env: { CLERK_PUBLISHABLE_KEY?: string } };
 
@@ -194,53 +194,60 @@ async function main(): Promise<void> {
   let clerk: Clerk;
   try {
     clerk = new Clerk(PUBLISHABLE_KEY);
-    // The Clerk Frontend API URL is embedded in the publishable key, so
-    // load() needs no arguments for either dev (pk_test_...) or prod
-    // (pk_live_...) instances.
     await clerk.load();
+
+    // ==================== DEBUG LOGS ====================
+    console.log("✅ Clerk loaded successfully", {
+      version: (clerk as any).version || "unknown",
+      hasUser: !!clerk.user,
+      hasSession: !!clerk.session,
+      hasMountSignIn: typeof clerk.mountSignIn === "function",
+      hasOpenSignIn: typeof clerk.openSignIn === "function",
+    });
+
+    if (typeof clerk.mountSignIn !== "function") {
+      throw new Error("Clerk was loaded without UI components (headless build). Check import.");
+    }
+    // ===================================================
   } catch (err) {
-    reportError(err instanceof Error ? err.message : "Failed to initialize Clerk.");
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("❌ Clerk initialization failed:", msg);
+    reportError(msg);
     return;
   }
 
-  // Already signed in (e.g. session cookie persisted in this dialog window).
+  // Already signed in (session cookie still valid)
   if (clerk.user && clerk.session) {
     const posted = await mintAndPostToken(clerk);
     if (posted) return;
   }
 
-  // Mount the sign-in widget and wait for the user to complete it.
+  // Mount the sign-in form
   setStatus("Sign in to continue.");
   const mount = document.getElementById("clerk-mount") as HTMLDivElement | null;
   if (!mount) {
     reportError("Auth dialog DOM is missing #clerk-mount.");
     return;
   }
-  mount.innerHTML = ""; // clear any fallback content
+  mount.innerHTML = "";
 
   try {
-    // `routing: "hash"` keeps Clerk's flow on URL fragments (#) and avoids
-    // any calls into `window.history.{push,replace}State`, which the Office
-    // Dialog webview may not implement. The dialog stays on one logical URL
-    // throughout, so hash mutations are inert. The addListener() callback
-    // below detects sign-in completion and mints the JWT.
+    console.log("🚀 Mounting Clerk sign-in UI...");
     clerk.mountSignIn(mount, {
       routing: "hash",
     });
   } catch (err) {
-    reportError(err instanceof Error ? err.message : "Failed to render Clerk sign-in.");
-    return;
+    console.error("❌ mountSignIn failed:", err);
+    reportError(err instanceof Error ? err.message : "Failed to render sign-in form.");
   }
 
-  // React to sign-in / session changes. Only post once so the dialog can close
-  // cleanly without racing duplicate handlers.
+  // Listen for successful sign-in
   let posted = false;
   clerk.addListener(async () => {
     if (posted) return;
     if (clerk.user && clerk.session) {
       posted = true;
-      const ok = await mintAndPostToken(clerk);
-      if (!ok) posted = false; // allow retry if the mint failed
+      await mintAndPostToken(clerk);
     }
   });
 }
