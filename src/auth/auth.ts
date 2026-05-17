@@ -26,16 +26,22 @@
  *   throw on. Hash routing uses URL fragments and never touches history, so
  *   it's the right fit for embedded dialog contexts.
  *
- * Why the /no-rhc subpath:
- *   The default `@clerk/clerk-js` build uses Remotely-Hosted Components (RHC):
- *   the UI bundles are fetched from Clerk's CDN at runtime. That fetch is not
- *   reliably reachable inside the Office Dialog webview, and when it fails
- *   the internal components promise never resolves, surfacing as the
- *   misleading `Error("Clerk was not loaded with Ui components")` thrown by
- *   `assertComponentsReady`. The `/no-rhc` subpath ships every UI component
- *   inlined in the bundle (~790 KB) so no runtime fetch is needed — the right
- *   choice for any sandboxed webview (Office add-ins, Electron contextBridge,
- *   strict-CSP pages, etc.).
+ * Why the default `@clerk/clerk-js` bundle (NOT /no-rhc):
+ *   Clerk ships two builds. The default bundle (`@clerk/clerk-js`) fetches its
+ *   UI implementation from Clerk's CDN at runtime; it auto-wires the internal
+ *   `ClerkUI` controller during `clerk.load()`, so `mountSignIn` / `openSignUp`
+ *   work out of the box. The `/no-rhc` ("no remote hosted components") subpath
+ *   is a headless-only build: it does NOT auto-wire UI components, and the
+ *   `ClerkUI` constructor it expects via `new Clerk(key, { ui: { ClerkUI } })`
+ *   is not exported by the package — `/no-rhc` is intended for callers that
+ *   render their own UI on top of Clerk's API (`clerk.client.signIn.create`).
+ *   Using `/no-rhc` with `mountSignIn` produces the misleading
+ *   `Error("Clerk was not loaded with Ui components")` thrown by
+ *   `assertComponentsReady`. The Office Dialog opened via `displayDialogAsync`
+ *   is a real top-level browser window with normal network access, so the
+ *   CDN fetch the default bundle performs is fine. The Clerk CDN hosts
+ *   (*.clerk.accounts.dev, *.accounts.dev, img.clerk.com, challenges.cloudflare.com)
+ *   are whitelisted in manifest.xml's <AppDomains>.
  */
 
 /* global Office, document, console, process, HTMLDivElement, window */
@@ -44,7 +50,7 @@
 // `import Clerk from ...` under Babel's CJS interop resolves to `module.default`,
 // which is undefined — surfacing as `TypeError: a.default is not a constructor`
 // when we later call `new Clerk(...)`. Always use the named import.
-import { Clerk } from "@clerk/clerk-js/no-rhc";
+import { Clerk } from "@clerk/clerk-js";
 
 declare const process: { env: { CLERK_PUBLISHABLE_KEY?: string } };
 
