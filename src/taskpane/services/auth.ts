@@ -222,12 +222,20 @@ function openDialog(options: { silent?: boolean } = {}): Promise<{ payload: Dial
         const finish = (payload: DialogPayload) => {
           if (resolved) return;
           resolved = true;
-          try {
-            dialog.close();
-          } catch {
-            // already closed
-          }
-          resolve({ payload });
+
+          // ==================== DEBUG MODE - Keep dialog open ====================
+          console.log("[DEBUG] Auth payload received:", payload);
+          
+          // Keep the dialog open for 10 seconds so you can inspect it
+          setTimeout(() => {
+            try {
+              dialog.close();
+            } catch (e) {
+              // already closed
+            }
+            resolve({ payload });
+          }, 10000); // 10 seconds - plenty of time to open DevTools
+          // =====================================================================
         };
 
         dialog.addEventHandler(Office.EventType.DialogMessageReceived, (arg) => {
