@@ -193,28 +193,19 @@ async function main(): Promise<void> {
 
   let clerk: Clerk;
   try {
-    clerk = new Clerk(PUBLISHABLE_KEY);
-    await clerk.load();
+  clerk = new Clerk(PUBLISHABLE_KEY);   // ← This line was failing
+  await clerk.load();
 
-    // ==================== DEBUG LOGS ====================
-    console.log("✅ Clerk loaded successfully", {
-      version: (clerk as any).version || "unknown",
-      hasUser: !!clerk.user,
-      hasSession: !!clerk.session,
-      hasMountSignIn: typeof clerk.mountSignIn === "function",
-      hasOpenSignIn: typeof clerk.openSignIn === "function",
-    });
-
-    if (typeof clerk.mountSignIn !== "function") {
-      throw new Error("Clerk was loaded without UI components (headless build). Check import.");
-    }
-    // ===================================================
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error("❌ Clerk initialization failed:", msg);
-    reportError(msg);
-    return;
-  }
+  console.log("✅ Clerk loaded!", {
+    version: (clerk as any).version,
+    hasMountSignIn: typeof clerk.mountSignIn === "function",
+    hasOpenSignIn: typeof clerk.openSignIn === "function"
+  });
+} catch (err) {
+  console.error("Clerk constructor failed:", err);
+  reportError(err instanceof Error ? err.message : String(err));
+  return;
+}
 
   // Already signed in (session cookie still valid)
   if (clerk.user && clerk.session) {
