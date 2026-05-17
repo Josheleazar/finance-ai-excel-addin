@@ -40,7 +40,11 @@
 
 /* global Office, document, console, process, HTMLDivElement, window */
 
-import Clerk from "@clerk/clerk-js/no-rhc";
+// `Clerk` is a NAMED export from @clerk/clerk-js (no default export). Using
+// `import Clerk from ...` under Babel's CJS interop resolves to `module.default`,
+// which is undefined — surfacing as `TypeError: a.default is not a constructor`
+// when we later call `new Clerk(...)`. Always use the named import.
+import { Clerk } from "@clerk/clerk-js/no-rhc";
 
 declare const process: { env: { CLERK_PUBLISHABLE_KEY?: string } };
 
@@ -193,19 +197,20 @@ async function main(): Promise<void> {
 
   let clerk: Clerk;
   try {
-  clerk = new Clerk(PUBLISHABLE_KEY);   // ← This line was failing
-  await clerk.load();
+    clerk = new Clerk(PUBLISHABLE_KEY);
+    await clerk.load();
 
-  console.log("✅ Clerk loaded!", {
-    version: (clerk as any).version,
-    hasMountSignIn: typeof clerk.mountSignIn === "function",
-    hasOpenSignIn: typeof clerk.openSignIn === "function"
-  });
-} catch (err) {
-  console.error("Clerk constructor failed:", err);
-  reportError(err instanceof Error ? err.message : String(err));
-  return;
-}
+    // eslint-disable-next-line no-console
+    console.log("[finalysis auth] Clerk loaded", {
+      hasMountSignIn: typeof clerk.mountSignIn === "function",
+      hasOpenSignIn: typeof clerk.openSignIn === "function",
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[finalysis auth] Clerk load failed:", err);
+    reportError(err instanceof Error ? err.message : String(err));
+    return;
+  }
 
   // Already signed in (session cookie still valid)
   if (clerk.user && clerk.session) {
