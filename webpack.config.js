@@ -73,6 +73,10 @@ module.exports = async (env, options) => {
     },
     resolve: {
       extensions: [".ts", ".html", ".js"],
+      alias: {
+      // Optional: force the no-rhc build
+      '@clerk/clerk-js': '@clerk/clerk-js/no-rhc'
+      }
     },
     module: {
       rules: [
