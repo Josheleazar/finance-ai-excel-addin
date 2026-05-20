@@ -434,61 +434,11 @@ body {
   color: var(--fa-text-muted);
 }
 
-/* Auth gate */
+/* Header actions */
 .app__header-actions {
   display: flex;
   align-items: center;
   gap: 4px;
-}
-
-.app__user {
-  font-size: 11px;
-  color: var(--fa-text-muted);
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-right: 4px;
-}
-
-.auth-gate {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 32px 16px;
-  background: var(--fa-surface);
-}
-
-.auth-gate__card {
-  width: 100%;
-  max-width: 320px;
-  padding: 18px 16px 20px;
-  background: var(--fa-bg);
-  border: 1px solid var(--fa-border);
-  border-radius: var(--fa-radius);
-  box-shadow: var(--fa-shadow);
-  text-align: center;
-}
-
-.auth-gate__title {
-  margin: 0 0 8px;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.auth-gate__body {
-  margin: 0 0 14px;
-  font-size: 12px;
-  color: var(--fa-text-muted);
-  line-height: 1.5;
-}
-
-.auth-gate__error {
-  margin: 10px 0 0;
-  font-size: 11px;
-  color: var(--fa-error);
-  line-height: 1.4;
 }
 
 /* Sideload */

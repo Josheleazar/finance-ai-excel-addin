@@ -12,14 +12,6 @@
   
   <AppDomains>
     <AppDomain>https://*.vercel.app</AppDomain>
-    <!-- Clerk development instances are served from *.clerk.accounts.dev.
-         For a production Clerk instance on a custom domain (e.g.
-         https://clerk.your-domain.com), add that hostname here too. -->
-    <AppDomain>https://clerk.accounts.dev</AppDomain>
-    <AppDomain>https://*.clerk.accounts.dev</AppDomain>
-    <AppDomain>https://*.accounts.dev</AppDomain>
-    <AppDomain>https://challenges.cloudflare.com</AppDomain>
-    <AppDomain>https://img.clerk.com</AppDomain>
   </AppDomains>
   
   <Hosts>
